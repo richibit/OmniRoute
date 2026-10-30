@@ -1,0 +1,20 @@
+# Archivos generados: no se versionan
+temp/*
+!temp/LEEME.md
+export/*
+!export/LEEME.md
+subtitulos/*
+!subtitulos/LEEME.md
+# Recursos del usuario (pueden ser pesados o tener derechos)
+assets/**/*.ttf
+assets/**/*.otf
+assets/**/*.mp4
+assets/**/*.mov
+assets/**/*.webm
+assets/**/*.wav
+assets/**/*.mp3
+assets/**/*.m4a
+assets/**/*.png
+assets/**/*.jpg
+assets/**/*.jpeg
+__pycache__/

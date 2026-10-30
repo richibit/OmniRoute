@@ -1,0 +1,7 @@
+# Dependencias obligatorias
+moviepy>=2.1,<3      # escritura/lectura de video (incluye imageio-ffmpeg con un FFmpeg portátil)
+numpy>=1.24
+pillow>=10.1         # dibujo de gráficos, texto y emoji
+
+# Opcional: voz neuronal en línea (si no hay internet se usa espeak-ng o una grabación propia)
+edge-tts>=6.1
