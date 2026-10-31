@@ -5,7 +5,7 @@ TikTok, Instagram Reels y YouTube Shorts, cada uno con la fórmula de sus videos
 
 | Video | Programa | Fórmula |
 | --- | --- | --- |
-| **La última vez que tu mamá te cepilló los dientes** (≈75 s) | `python generar_espejo.py` | Historia contada por el espejo del baño: personajes 3D tipo juguete, contador, salto de 25 años, sin voz |
+| **La última vez que tu mamá te cepilló los dientes** (≈75 s) | `python generar_espejo.py` | Historia contada por el espejo del baño: personajes 3D en perspectiva, contador, salto de 25 años, sin voz |
 | **24 horas sin cepillarse** (≈66 s) | `python generar_video.py` | Explicador con voz, subtítulos karaoke, tarjetas de datos y llamada a compartir |
 
 ## Video 2 · «La última vez que tu mamá te cepilló los dientes»
@@ -18,7 +18,8 @@ cierre oscuro con un dato. **Sin voz en off y sin marca de agua durante el video
 
 | Elemento de la fórmula (medido en las referencias) | Cómo se aplica |
 | --- | --- |
-| Cámara fija, mundo 3D «de juguete», luz cálida de noche y fría de mañana | `juguete3d.py`: esferas, elipsoides y cápsulas con z-buffer, luz envolvente, luz de contorno, oclusión ambiental; caras pintadas que giran con la cabeza |
+| Cámara fija con perspectiva (el espejo mira al baño), mundo 3D «de juguete», luz cálida de noche y fría de mañana | `juguete3d.py`: cámara estenopeica con eje horizontal (lo que se acerca al espejo crece y baja), elipsoides orientables, cápsulas, cajas con texturas (tarjetas, nota, cajita), cilindros y cromo; z-buffer, luz envolvente, contorno, especular y oclusión ambiental |
+| Acciones creíbles: lo que se toca se toca de verdad | La encimera y el lavabo se calculan rayo a rayo (`escenario.py`) y tapan lo que queda detrás; brazos de largo real (`personajes.py`, cinemática inversa de dos huesos) con manos de palma, dedos y pulgar; cada objeto (`utileria.py`) se coloca por su punto natural (cabeza del cepillo, punta del lápiz, esquina de la tarjeta) y la mano se calcula a partir de él, así que van siempre juntos; el programa avisa si una mano no alcanza su objetivo |
 | Contador a la izquierda: rótulo en versalitas, número grande en serif, línea de edad, lo especial en dorado | `VECES QUE TE CEPILLÓ LOS DIENTES · 4,626 · TIENES 7 AÑOS · LA ÚLTIMA` |
 | Título serif crema con la palabra clave en dorado + etiqueta «contado por…» (primeros 3 s) | «La última vez que tu mamá / te **cepilló** los dientes» · CONTADO POR EL ESPEJO DEL BAÑO |
 | Subtítulos en itálica minúscula, una línea, ~4 s con medio segundo sin texto, fundido de 0,3 s | Igual, centrados un poco abajo del centro |
@@ -31,7 +32,7 @@ cierre oscuro con un dato. **Sin voz en off y sin marca de agua durante el video
 ```bash
 cd scripts/ad-hoc/dental-video-generator
 python generar_espejo.py --descargar-fuentes   # la primera vez (Newsreader, Caveat…)
-python generar_espejo.py                       # → export/la_ultima_vez_que_tu_mama.mp4 (≈12 min con 4 núcleos)
+python generar_espejo.py                       # → export/la_ultima_vez_que_tu_mama.mp4 (≈25 min con 4 núcleos)
 python generar_espejo.py --previsualizar 1 21 63   # PNG en temp/previews_espejo/
 python generar_espejo.py --desde 48 --hasta 58     # solo un tramo
 ```
@@ -41,7 +42,11 @@ python generar_espejo.py --desde 48 --hasta 58     # solo un tramo
 - Textos, tiempos, contador, subtítulos, efectos, tarjetas, nombres y cierre: `guion_espejo.py`
   (los nombres «Mateo» y «Ana» de la cajita y de la tarjeta son provisionales; si el protagonista es
   niña, cambia «yo solito» por «yo solita» y «el que cuenta» por «la que cuenta»).
-- Coreografía de cada escena (posiciones, gestos, expresiones): métodos `escena_N` de `escenas_espejo.py`.
+- Coreografía de cada escena (posiciones, gestos, expresiones): métodos `escena_N` de `escenas_espejo.py`
+  (trayectorias suaves con `curva()`, pasos con los pies apoyados con `caminata()`, cepillado con
+  `cepillo_en_boca()`, dedos con `contar()`, tarjetas al marco con `meter_en_marco()`).
+- Baño, encimera, lavabo, grifo y cámara: `escenario.py`; objetos (cepillos, vaso, pasta, cajita, tarjetas,
+  nota, lápiz, monedas, celular): `utileria.py`.
 - Aspecto de los personajes (colores de ropa, pelo, proporciones): `personajes.py` y `mama()`/`hijo()` en `escenas_espejo.py`.
 - Música propia: `assets/audios/musica/musica_espejo.mp3` (el segundo de silencio antes del salto se respeta).
 - Efectos propios: `assets/audios/sfx/<nombre>.wav` con los nombres de `musica.SFX` (agua, cepillado_suave,
@@ -125,9 +130,11 @@ FFmpeg del sistema: `sudo apt install ffmpeg` (Ubuntu/Debian), `brew install ffm
 dental-video-generator/
 ├── generar_espejo.py     ← video 2: «La última vez que tu mamá…» (programa principal)
 ├── guion_espejo.py       ← video 2: escenas, contador, subtítulos, tarjetas y cierre
-├── escenas_espejo.py     ← video 2: decorado del baño, coreografía y textos en pantalla
-├── juguete3d.py          ← motor 3D mínimo (personajes y objetos tipo juguete)
-├── personajes.py         ← mamá, hijo y nieta (cinemática de brazos, caras pintadas)
+├── escenas_espejo.py     ← video 2: coreografía de las 18 escenas y textos en pantalla
+├── escenario.py          ← video 2: cámara, baño, encimera y lavabo (con oclusión), grifo y agua
+├── utileria.py           ← video 2: cepillos, vaso, pasta, cajita, tarjetas, nota, lápiz, monedas…
+├── juguete3d.py          ← motor 3D mínimo con perspectiva (personajes y objetos tipo juguete)
+├── personajes.py         ← mamá, hijo y nieta (brazos y piernas con cinemática inversa, manos, caras)
 ├── musica.py             ← video 2: caja de música, piano y efectos
 ├── generar_video.py      ← video 1: «24 horas sin cepillarse» (programa principal)
 ├── guion.py              ← narración, palabras resaltadas, etiquetas, sonidos y reloj (lo que más editarás)

@@ -1,8 +1,16 @@
 """
 Escenas de «La última vez que tu mamá te cepilló los dientes», contado por el
-espejo del baño: cámara fija a la altura del espejo (vemos el lavabo, a quien
-se cepilla y la puerta del fondo), personajes 3D tipo juguete, contador a la
-izquierda, subtítulos en itálica minúscula, salto de 25 años y cierre con dato.
+espejo del baño: una cámara en perspectiva detrás del espejo (vemos la
+encimera con el lavabo, a quien se cepilla y la puerta del fondo), personajes
+3D tipo juguete, contador a la izquierda, subtítulos en itálica minúscula,
+salto de 25 años y cierre con dato.
+
+Todo lo que se toca se toca de verdad: las manos llegan a la boca, al vaso,
+al grifo o al marco con brazos de largo real; los objetos se colocan por su
+punto natural (cabeza del cepillo, punta del lápiz, centro de la tarjeta) y
+la mano se calcula a partir de ellos, así que van siempre juntos. Las
+trayectorias son curvas suaves (sin paradas bruscas) y los pies se apoyan en
+el suelo al caminar.
 
 Cada fotograma es una función pura del tiempo `t`: el video se renderiza en
 paralelo por tramos sin que cambie el resultado.
@@ -15,43 +23,26 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 import config
+import escenario as S
 import graficos as G
 import guion_espejo as GE
 import juguete3d as J
 import personajes as PJ
-from utilidades import (
-    disco_suave,
-    fuente,
-    gradiente_radial,
-    lerp,
-    limitar,
-    pegar,
-    progreso,
-    render_lineas,
-    salida_cubica,
-    suave,
-)
+import utileria as U
+from utilidades import fuente, lerp, limitar, pegar, progreso, render_lineas, salida_cubica, suave
 
 W, H, FPS = config.ANCHO, config.ALTO, config.FPS
+Y_SUBTITULO = 1262  # justo encima del borde de la encimera: no tapa caras
 CREMA = (255, 250, 243)
 DORADO = (232, 190, 98)  # #DDB664 del guion, un punto más vivo para leerse sobre fondos claros
-LINEA = 1500  # borde de la encimera: lo que hay detrás queda oculto por debajo
-PISO = 1330  # línea del suelo en la pared del fondo (pies de quien está en la puerta)
-E = 1.4  # escala de quien está frente al espejo (cerca de la cámara)
-PUERTA = (815, 770, 985)  # x0, y0, x1 del vano de la puerta (el suelo está en PISO)
-VASO = (935, 1530)  # boca del vaso de los cepillos
-GRIFO = (520, 1800)  # donde cae el agua
-MARCO = (885, 520)  # esquina del espejo donde se meten las tarjetas
-# Posición de cada tarjeta en el marco: la del hijo, la vieja de mamá y la nueva (en el borde de arriba,
-# para no tapar la cara de mamá cuando la lee desde la puerta).
-POS_TARJETAS = {0: (885, 480), 1: (859, 610), 2: (650, 300)}
+N = J._norm
 
 
 # ---------------------------------------------------------------------------
 # Utilidades de animación
 # ---------------------------------------------------------------------------
 def kf(t, claves):
-    """Interpola fotogramas clave [(t, valor)] con suavizado; los valores pueden ser números o tuplas."""
+    """Interpola fotogramas clave [(t, valor)] con suavizado (para y desde reposo); valores número o tupla."""
     if t <= claves[0][0]:
         return claves[0][1]
     for (t0, v0), (t1, v1) in zip(claves, claves[1:]):
@@ -59,29 +50,66 @@ def kf(t, claves):
             k = suave(progreso(t, t0, t1))
             if v0 is None or v1 is None:
                 return v1 if k > 0.5 else v0
-            if isinstance(v0, (tuple, list)):
-                return tuple(a + (b - a) * k for a, b in zip(v0, v1))
+            if isinstance(v0, (tuple, list, np.ndarray)):
+                return tuple(float(a) + (float(b) - float(a)) * k for a, b in zip(v0, v1))
             return v0 + (v1 - v0) * k
     return claves[-1][1]
 
 
+def curva(t, claves):
+    """
+    Trayectoria suave (Catmull-Rom en el tiempo) por los puntos clave [(t, punto)]:
+    velocidad continua, sin pararse en cada clave; arranca y frena en la primera y la última.
+    """
+    ts = [c[0] for c in claves]
+    ps = [np.asarray(c[1], np.float64) for c in claves]
+    if t <= ts[0]:
+        return tuple(ps[0])
+    if t >= ts[-1]:
+        return tuple(ps[-1])
+    i = max(0, min(len(ts) - 2, int(np.searchsorted(ts, t, side="right")) - 1))
+    t0, t1 = ts[i], ts[i + 1]
+    p0, p1 = ps[i], ps[i + 1]
+    dt = t1 - t0
+
+    def tangente(j):
+        if j == 0 or j == len(ts) - 1:
+            return np.zeros_like(ps[j])
+        return (ps[j + 1] - ps[j - 1]) / (ts[j + 1] - ts[j - 1])
+
+    m0, m1 = tangente(i) * dt, tangente(i + 1) * dt
+    u = (t - t0) / dt
+    h00, h10 = 2 * u**3 - 3 * u**2 + 1, u**3 - 2 * u**2 + u
+    h01, h11 = -2 * u**3 + 3 * u**2, u**3 - u**2
+    return tuple(h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1)
+
+
 def parpadeo(t, base, desfase=0.0):
     """Sustituye la expresión por un parpadeo breve cada ~3,4 s."""
-    return "parpadeo" if ((t + desfase) % 3.4) < 0.12 and base in ("neutral", "sonrisa", "abierta") else base
-
-
-def cepillado(centro, t, amplitud=13, frecuencia=4.2):
-    """Movimiento de vaivén de una mano que cepilla alrededor de `centro`."""
-    x, y, z = centro
-    return (x + math.sin(t * 2 * math.pi * frecuencia) * amplitud, y + math.cos(t * 2 * math.pi * frecuencia * 2) * 3, z)
+    return "parpadeo" if ((t + desfase) % 3.4) < 0.11 and base in ("neutral", "sonrisa", "abierta", "concentrada") else base
 
 
 def respiracion(t, desfase=0.0):
-    return math.sin((t + desfase) * 2 * math.pi * 0.22) * 2.5
+    return math.sin((t + desfase) * 2 * math.pi * 0.22) * 2.2
+
+
+def pulso(t, centros, ancho=0.08):
+    """Suma de pulsos gaussianos (gestos breves) en los instantes `centros`."""
+    return sum(math.exp(-(((t - c) / ancho) ** 2)) for c in centros)
+
+
+def escalon(t, centros, dur=0.16):
+    """Cuenta cuántos instantes de `centros` han pasado, con transición suave de `dur` s."""
+    return sum(suave(progreso(t, c, c + dur)) for c in centros)
+
+
+def y_cabeza(tipo, banco=0.0, escala=1.0):
+    """Altura del centro de la cabeza de alguien de pie en el suelo (o en un banquito de `banco` px)."""
+    return S.SUELO - banco - PJ.altura_pies(tipo, escala)
 
 
 # ---------------------------------------------------------------------------
-# Reparto
+# Reparto y posiciones
 # ---------------------------------------------------------------------------
 SUETER = (214, 160, 52)  # suéter mostaza de mamá (no cambia en 30 años)
 
@@ -89,7 +117,7 @@ SUETER = (214, 160, 52)  # suéter mostaza de mamá (no cambia en 30 años)
 @functools.lru_cache(maxsize=None)
 def mama(edad=26):
     pelo = (206, 202, 198) if edad >= 55 else (84, 56, 42) if edad >= 40 else (92, 58, 40)
-    return PJ.Personaje("adulto", SUETER, (92, 74, 64), pelo, "mono", arrugas=edad >= 55)
+    return PJ.Personaje("adulta", SUETER, (92, 74, 64), pelo, "mono", arrugas=edad >= 55)
 
 
 @functools.lru_cache(maxsize=None)
@@ -98,8 +126,10 @@ def hijo(edad, pegatina=False):
         return PJ.Personaje("bebe", (176, 208, 238), (176, 208, 238), (70, 48, 34), "bebe")
     if edad < 3:
         return PJ.Personaje("pequeno", (128, 174, 230), (128, 174, 230), (64, 42, 30), "corto")
+    if edad < 6.5:
+        return PJ.Personaje("nino4", (86, 128, 212), (86, 128, 212), (60, 40, 28), "corto", pegatina=(250, 200, 70) if pegatina else None)
     if edad < 10:
-        return PJ.Personaje("nino", (86, 128, 212), (86, 128, 212), (60, 40, 28), "corto", pegatina=(250, 200, 70) if pegatina else None)
+        return PJ.Personaje("nino7", (86, 128, 212), (86, 128, 212), (60, 40, 28), "corto")
     if edad < 25:
         return PJ.Personaje("adolescente", (150, 153, 160), (64, 70, 92), (54, 38, 30), "capucha")
     return PJ.Personaje("adulto", (40, 58, 98), (62, 62, 70), (54, 38, 30), "corto")
@@ -110,256 +140,21 @@ def nieta():
     return PJ.Personaje("pequeno", (240, 142, 152), (240, 142, 152), (72, 46, 34), "coletas")
 
 
-def limitar_cuerpo(prims):
-    """Oculta el cuerpo por debajo de la encimera; los brazos y las manos sí pueden pasar por delante."""
-    for p in prims:
-        if getattr(p, "parte", "cuerpo") != "brazo":
-            p.limite_y = LINEA
-    return prims
-
-
-# ---------------------------------------------------------------------------
-# Utilería 3D
-# ---------------------------------------------------------------------------
-def cepillo(mano, punta, color, pasta=False):
-    """Cepillo de dientes de la mano a la punta (mango de color, cabezal blanco, pasta opcional)."""
-    m, p = np.asarray(mano, np.float32), np.asarray(punta, np.float32)
-    u = (p - m) / (np.linalg.norm(p - m) + 1e-6)
-    prims = [J.Capsula(tuple(m - u * 12), tuple(p - u * 16), 7, color, brillo=0.35)]
-    prims.append(J.Capsula(tuple(p - u * 18), tuple(p), 8.5, (236, 242, 248), brillo=0.1))
-    if pasta:
-        prims.append(J.Elipsoide(tuple(p - u * 9 + np.array([0, -7, 6])), (9, 6, 7), (250, 252, 252), brillo=0.2))
-    return prims
-
-
-def telefono(mano, inclinacion=0.0):
-    x, y, z = mano
-    return [J.Capsula((x - 4, y - 46, z + 10), (x + 4, y + 30, z + 10), 24, (36, 38, 46), aplanado=0.3, brillo=0.5)]
-
-
-def lata(centro, abierta=False):
-    x, y, z = centro
-    prims = [J.Capsula((x - 60, y, z), (x + 60, y, z), 34, (186, 70, 64), aplanado=0.55, brillo=0.45)]
-    if not abierta:
-        prims.append(J.Capsula((x - 64, y - 26, z + 4), (x + 64, y - 26, z + 4), 14, (205, 90, 80), aplanado=0.5, brillo=0.5))
-    return prims
-
-
-def tarjeta3d(mano):
-    x, y, z = mano
-    return [J.Capsula((x - 44, y - 34, z + 14), (x + 44, y - 34, z + 14), 26, (250, 246, 236), aplanado=0.12, brillo=0.05)]
-
-
-def diente_pequeno(mano):
-    x, y, z = mano
-    return [J.Elipsoide((x, y - 22, z + 18), (9, 11, 8), (252, 250, 240), brillo=0.4)]
-
-
-# ---------------------------------------------------------------------------
-# Decorado: el baño visto desde el espejo
-# ---------------------------------------------------------------------------
-def _luz_mapa(noche):
-    """Mapa de iluminación del decorado (multiplicador por píxel)."""
-    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-    if noche:  # lámpara sobre el espejo (arriba, hacia la cámara) + resplandor del pasillo
-        base = 0.40 + 0.78 * np.exp(-(((xx - 520) / 700) ** 2 + ((yy - 560) / 900) ** 2))
-        base += 0.5 * np.exp(-(((xx - 900) / 120) ** 2 + ((yy - 1050) / 300) ** 2))
-    else:  # luz de la ventana (izquierda)
-        base = 0.62 + 0.5 * np.exp(-(((xx - 280) / 560) ** 2 + ((yy - 560) / 760) ** 2))
-    return base[..., None]
-
-
-@functools.lru_cache(maxsize=2)
-def fondo_bano(nombre):
-    noche = nombre == "noche"
-    img = Image.new("RGB", (W, H), (0, 0, 0))
-    d = ImageDraw.Draw(img)
-    bx0, bx1, by0, zocalo = 120, 1000, 140, 960
-    pared = (190, 142, 104) if noche else (204, 208, 196)
-    azulejo = (230, 220, 202) if noche else (232, 238, 236)
-    junta = (188, 172, 150) if noche else (190, 200, 198)
-    d.polygon([(0, 0), (W, 0), (bx1, by0), (bx0, by0)], fill=(140, 104, 78) if noche else (182, 186, 180))  # techo
-    d.polygon([(0, 0), (bx0, by0), (bx0, PISO), (0, H)], fill=tuple(int(c * 0.8) for c in pared))
-    d.polygon([(W, 0), (bx1, by0), (bx1, PISO), (W, H)], fill=tuple(int(c * 0.74) for c in pared))
-    d.polygon([(bx0, PISO), (bx1, PISO), (W, H), (0, H)], fill=(118, 94, 78) if noche else (160, 160, 152))
-    d.rectangle([bx0, by0, bx1, zocalo], fill=pared)
-    d.rectangle([bx0, zocalo, bx1, PISO], fill=azulejo)
-    for y in range(zocalo, PISO, 56):
-        d.line([(bx0, y), (bx1, y)], fill=junta, width=3)
-    for x in range(bx0, bx1, 56):
-        d.line([(x, zocalo), (x, PISO)], fill=junta, width=3)
-    for lado, x_borde in ((-1, bx0), (1, bx1)):
-        ext = 0 if lado < 0 else W
-        d.polygon([(x_borde, zocalo), (x_borde, PISO), (ext, H), (ext, zocalo + 40)], fill=tuple(int(c * (0.84 if lado < 0 else 0.78)) for c in azulejo))
-    d.rectangle([bx0, zocalo - 8, bx1, zocalo + 6], fill=tuple(int(c * 0.9) for c in azulejo))
-    # ventana (izquierda)
-    wx0, wy0, wx1, wy1 = 165, 370, 385, 690
-    marco = (236, 230, 220) if noche else (244, 246, 246)
-    d.rectangle([wx0 - 14, wy0 - 14, wx1 + 14, wy1 + 14], fill=marco)
-    d.rectangle([wx0, wy0, wx1, wy1], fill=(58, 66, 92) if noche else (226, 240, 252))
-    d.line([((wx0 + wx1) / 2, wy0), ((wx0 + wx1) / 2, wy1)], fill=marco, width=10)
-    d.line([(wx0, (wy0 + wy1) / 2), (wx1, (wy0 + wy1) / 2)], fill=marco, width=10)
-    # aplique de luz en la pared
-    d.rounded_rectangle([625, 520, 695, 600], radius=26, fill=(255, 236, 196) if noche else (236, 232, 222))
-    d.rectangle([652, 600, 668, 630], fill=(150, 130, 110))
-    # toallero con toalla a rayas
-    d.rounded_rectangle([555, 790, 705, 802], radius=6, fill=(188, 188, 194))
-    d.rounded_rectangle([570, 798, 690, 1050], radius=20, fill=(222, 110, 96) if noche else (212, 122, 112))
-    for y in (870, 910):
-        d.rectangle([570, y, 690, y + 14], fill=(244, 230, 214))
-    # puerta (derecha) con el pasillo iluminado
-    px0, py0, px1 = PUERTA
-    d.rectangle([px0 - 18, py0 - 18, px1 + 18, PISO], fill=(244, 236, 224) if noche else (238, 240, 238))
-    pasillo = gradiente_radial(px1 - px0, PISO - py0, ((px1 - px0) / 2, 160), 520, (255, 212, 150) if noche else (220, 216, 206), (140, 90, 56) if noche else (150, 150, 144))
-    dp = ImageDraw.Draw(pasillo)
-    dp.rectangle([40, 90, 130, 170], outline=(120, 80, 50) if noche else (130, 126, 120), width=6)
-    dp.polygon([(0, PISO - py0 - 110), (px1 - px0, PISO - py0 - 110), (px1 - px0, PISO - py0), (0, PISO - py0)], fill=(166, 106, 68) if noche else (156, 150, 140))
-    img.paste(pasillo.convert("RGB").filter(ImageFilter.GaussianBlur(3)), (px0, py0))
-    arr = np.asarray(img, np.float32) * _luz_mapa(noche)
-    if noche:
-        arr += np.asarray(gradiente_radial(W, H, (900, 1060), 300, (60, 34, 12), (0, 0, 0)).convert("RGB"), np.float32)
-        arr += np.asarray(gradiente_radial(W, H, (660, 560), 220, (90, 60, 26), (0, 0, 0)).convert("RGB"), np.float32)
-    else:
-        rayos = Image.new("L", (W, H), 0)
-        ImageDraw.Draw(rayos).polygon([(wx0, wy0), (wx1, wy0 + 40), (920, 1500), (320, 1500)], fill=52)
-        arr += np.asarray(rayos.filter(ImageFilter.GaussianBlur(40)), np.float32)[..., None] * np.array([1.0, 0.97, 0.9])
-    out = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").filter(ImageFilter.GaussianBlur(1.2))
-    return out.convert("RGBA")
-
-
-@functools.lru_cache(maxsize=2)
-def encimera(nombre):
-    """Encimera en primer plano con lavabo, grifo cromado, vaso de cepillos y pasta (capa con transparencia arriba)."""
-    noche = nombre == "noche"
-    luz = J.NOCHE if noche else J.MANANA
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sup = (224, 210, 190) if noche else (226, 228, 224)
-    arr = np.zeros((H, W, 4), np.float32)
-    yy = np.mgrid[0:H, 0:W][0].astype(np.float32)
-    k = np.clip((yy - LINEA) / (H - LINEA), 0, 1)
-    for i in range(3):
-        arr[..., i] = sup[i] * (0.98 - 0.16 * k)
-    arr[..., 3] = (yy >= LINEA) * 255
-    img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
-    d = ImageDraw.Draw(img)
-    d.rectangle([0, LINEA - 3, W, LINEA + 5], fill=tuple(min(255, c + 22) for c in sup) + (255,))
-    cx, cy, rx, ry = GRIFO[0], 1830, 330, 150
-    d.ellipse([cx - rx - 16, cy - ry - 12, cx + rx + 16, cy + ry + 12], fill=(250, 250, 248, 255))
-    cuenco = gradiente_radial(rx * 2, ry * 2, (rx, ry * 0.75), rx * 1.1, (212, 218, 222), (146, 152, 160))
-    m = Image.new("L", (rx * 2, ry * 2), 0)
-    ImageDraw.Draw(m).ellipse([0, 0, rx * 2 - 1, ry * 2 - 1], fill=255)
-    cuenco.putalpha(m)
-    img.alpha_composite(cuenco, (cx - rx, cy - ry))
-    d.ellipse([cx - 16, cy + 6, cx + 16, cy + 24], fill=(116, 120, 128, 255))
-    vx, vy = VASO
-    utileria = [
-        J.Capsula((vx, vy - 10, 0), (vx, vy + 110, 0), 52, (150, 210, 196), brillo=0.3),  # vaso
-        J.Capsula((vx - 24, vy, 40), (vx - 52, vy - 150, 30), 7, (238, 196, 70), brillo=0.35),  # cepillo de mamá
-        J.Capsula((vx - 52, vy - 150, 30), (vx - 53, vy - 172, 30), 9, (236, 242, 248)),
-    ]
-    spr, x0, y0 = J.render(utileria, luz, margen=8)
-    sh, pad = J.sombra_de(spr, (10, 8), 14, 0.35)
-    img.alpha_composite(sh, (x0 - pad, y0 - pad))
-    img.alpha_composite(spr, (x0, y0))
-    tubo = sprite_pasta()
-    sh, pad = J.sombra_de(tubo, (8, 8), 10, 0.35)
-    img.alpha_composite(sh, (150 - pad, 1660 - pad))
-    img.alpha_composite(tubo, (150, 1660))
-    grifo = sprite_grifo(noche)
-    img.alpha_composite(grifo, (cx - grifo.width // 2, H - grifo.height))
-    return img
-
-
-@functools.lru_cache(maxsize=1)
-def sprite_pasta():
-    """Tubo de pasta dental (blanco con franja azul, tapa roja), un poco girado."""
-    ss = 3
-    w, h = 190, 70
-    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.polygon([(10 * ss, 14 * ss), (150 * ss, 8 * ss), (150 * ss, 58 * ss), (10 * ss, 52 * ss)], fill=(244, 246, 246, 255))
-    d.rectangle([4 * ss, 12 * ss, 16 * ss, 54 * ss], fill=(226, 228, 230, 255))  # pliegue
-    d.polygon([(60 * ss, 11 * ss), (110 * ss, 9 * ss), (110 * ss, 57 * ss), (60 * ss, 55 * ss)], fill=(66, 140, 210, 255))
-    d.rounded_rectangle([148 * ss, 16 * ss, 184 * ss, 50 * ss], radius=8 * ss, fill=(210, 60, 66, 255))
-    brillo = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(brillo).rectangle([14 * ss, 16 * ss, 146 * ss, 24 * ss], fill=(255, 255, 255, 120))
-    img.alpha_composite(brillo.filter(ImageFilter.GaussianBlur(3 * ss)))
-    return img.resize((w, h), Image.LANCZOS).rotate(8, expand=True, resample=Image.BICUBIC)
-
-
-@functools.lru_cache(maxsize=2)
-def sprite_grifo(noche):
-    """Grifo cromado que asoma desde abajo (degradado metálico con reflejos)."""
-    ss = 3
-    w, h = 120, 210
-    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
-    m = Image.new("L", img.size, 0)
-    dm = ImageDraw.Draw(m)
-    dm.rounded_rectangle([30 * ss, 60 * ss, 90 * ss, h * ss], radius=30 * ss, fill=255)
-    dm.rounded_rectangle([40 * ss, 0, 80 * ss, 90 * ss], radius=20 * ss, fill=255)
-    xx = np.linspace(0, 1, w * ss)[None, :]
-    base = 0.45 + 0.55 * np.abs(np.sin(xx * np.pi * 1.6 + 0.4))
-    tono = np.array([214, 222, 236] if noche else [200, 212, 230], np.float32)
-    rgb = np.repeat((base[..., None] * tono[None, None, :]), h * ss, axis=0)
-    if noche:
-        rgb = rgb * np.array([1.0, 0.93, 0.84])
-    arr = np.dstack([np.clip(rgb, 0, 255), np.asarray(m, np.float32)]).astype(np.uint8)
-    img = Image.fromarray(arr, "RGBA")
-    return img.resize((w, h), Image.LANCZOS)
-
-
-@functools.lru_cache(maxsize=4)
-def sprite_lata(abierta=False):
-    """Cajita de lata roja con el nombre del niño (vista sobre la encimera)."""
-    ss = 2
-    w, h = 220, 130
-    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 34 * ss, w * ss - 1, h * ss - 1], radius=26 * ss, fill=(176, 62, 58, 255))
-    d.rounded_rectangle([10 * ss, 44 * ss, (w - 10) * ss, (h - 12) * ss], radius=20 * ss, outline=(214, 120, 100, 255), width=3 * ss)
-    if abierta:
-        d.rounded_rectangle([10 * ss, 0, (w - 10) * ss, 46 * ss], radius=18 * ss, fill=(206, 92, 80, 255))
-    else:
-        d.rounded_rectangle([0, 18 * ss, w * ss - 1, 56 * ss], radius=18 * ss, fill=(206, 92, 80, 255))
-        d.rounded_rectangle([60 * ss, 70 * ss, (w - 60) * ss, 104 * ss], radius=6 * ss, fill=(250, 244, 228, 255))
-        d.text((74 * ss, 68 * ss), GE.NOMBRE_HIJO, font=fuente("manuscrita", 28 * ss), fill=(150, 50, 46, 255))
-    return img.resize((w, h), Image.LANCZOS)
-
-
-def cepillo_en_vaso(nombre, color=(90, 140, 230)):
-    """Cepillo del niño dentro del vaso (aparte, porque a veces está en su mano)."""
-    luz = J.NOCHE if nombre == "noche" else J.MANANA
-    return _cepillo_vaso(nombre, color, luz)
-
-
-@functools.lru_cache(maxsize=8)
-def _cepillo_vaso(nombre, color, luz):
-    vx, vy = VASO
-    spr, x0, y0 = J.render([J.Capsula((vx + 18, vy, 50), (vx + 50, vy - 152, 40), 7, color, brillo=0.35), J.Capsula((vx + 50, vy - 152, 40), (vx + 52, vy - 174, 40), 9, (236, 242, 248))], luz, margen=6)
-    return spr, x0, y0
-
-
-def chorro(img, t, intensidad=1.0):
-    """Chorro de agua del grifo al lavabo."""
-    if intensidad <= 0:
-        return
-    capa = Image.new("RGBA", (60, 90), (0, 0, 0, 0))
-    d = ImageDraw.Draw(capa)
-    for k in range(4):
-        x = 30 + math.sin(t * 40 + k) * 3
-        d.line([(x, 0), (x + math.sin(t * 25 + k * 2) * 2, 90)], fill=(220, 236, 255, int(110 * intensidad)), width=6 - k)
-    pegar(img, capa.filter(ImageFilter.GaussianBlur(1.2)), GRIFO[0], GRIFO[1] + 12)
-
-
-@functools.lru_cache(maxsize=1)
-def vineta_suave():
-    """Oscurecimiento suave de los bordes (aspecto de cámara y mejor lectura de los textos)."""
-    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-    d = np.sqrt(((xx - W / 2) / (W * 0.72)) ** 2 + ((yy - H * 0.5) / (H * 0.66)) ** 2)
-    a = np.clip((d - 0.62) / 0.6, 0, 1) ** 1.6 * 150
-    img = np.zeros((H, W, 4), np.uint8)
-    img[..., 3] = a.astype(np.uint8)
-    return Image.fromarray(img, "RGBA")
+YM = y_cabeza("adulta")
+# El niño (o quien se cepilla) al centro, frente al lavabo; mamá a su derecha (del lado de la puerta,
+# el vaso, el grifo y el marco), así nunca tiene que cruzar por detrás de él.
+MAMA = (800.0, YM, -5.0)
+MAMA_SOLA = (545.0, YM, -5.0)
+NINO4 = (548.0, y_cabeza("nino4", 215), 22.0)
+PEQ = (548.0, y_cabeza("pequeno", 330), 22.0)
+NINO7 = (548.0, y_cabeza("nino7", 150), 22.0)
+TEEN = (548.0, y_cabeza("adolescente"), -5.0)
+HIJO32 = (485.0, y_cabeza("adulto"), -5.0)
+HIJO_SOLO = (505.0, y_cabeza("adulto"), -5.0)
+NIETA = (712.0, y_cabeza("pequeno", 340), 22.0)
+BEBE = (548.0, S.ENCIMERA_Y - PJ.TIPOS["bebe"]["cadera_y"] * PJ.TIPOS["bebe"]["R"] - 6, 108.0)
+MAMA_BEBE = (805.0, YM, -25.0)
+PUERTA_XZ = (1190.0, -780.0)  # quien mira desde la puerta (pies en el suelo del fondo)
 
 
 # ---------------------------------------------------------------------------
@@ -416,15 +211,14 @@ def sprite_contador(rotulo, numero, lineas):
     alto = 30 * len(partes) + num.height + 30 * len(extras) + 50
     img = Image.new("RGBA", (ancho + 10, alto), (0, 0, 0, 0))
     y = 0
-    for p in partes:  # rótulo en una o dos líneas
+    for p in partes:
         img.alpha_composite(p, (0, y))
         y += 30
     img.alpha_composite(num, (-2, y + 12))
     y += num.height + 16
-    for e in extras:  # edad y línea dorada
+    for e in extras:
         img.alpha_composite(e, (0, y))
         y += 30
-    # halo oscuro muy suave detrás del bloque: se lee igual sobre la pared, los azulejos o la ropa
     pad = 40
     halo = Image.new("L", (img.width + pad * 2, img.height + pad * 2), 0)
     halo.paste(img.getchannel("A"), (pad, pad))
@@ -451,34 +245,6 @@ def sprite_salto(lineas):
     return _sombra_texto(img, 10, 0.7)
 
 
-@functools.lru_cache(maxsize=16)
-def sprite_tarjeta(titulo, lineas, tachadas=(), nueva=None, ancho=300, color=(252, 248, 236)):
-    """Tarjeta de cita escrita a mano (con fechas tachadas si toca)."""
-    ss = 2
-    filas = 1 + len(lineas) + len(tachadas) + (1 if nueva else 0)
-    alto = 70 + filas * 46
-    img = Image.new("RGBA", (ancho * ss, alto * ss), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 0, ancho * ss - 1, alto * ss - 1], radius=10 * ss, fill=color + (255,))
-    d.rectangle([0, 0, ancho * ss, 16 * ss], fill=(150, 210, 196, 255))
-    f_t = fuente("manuscrita", 40 * ss)
-    tinta = (40, 50, 80, 255)
-    y = 26 * ss
-    d.text((22 * ss, y), titulo, font=f_t, fill=tinta)
-    y += 50 * ss
-    for l in lineas:
-        d.text((22 * ss, y), l, font=f_t, fill=tinta)
-        y += 46 * ss
-    for l in tachadas:
-        d.text((22 * ss, y), l, font=f_t, fill=(90, 96, 120, 255))
-        w = f_t.getlength(l)
-        d.line([(18 * ss, y + 26 * ss), (26 * ss + w, y + 20 * ss)], fill=(200, 60, 60, 255), width=4 * ss)
-        y += 46 * ss
-    if nueva:
-        d.text((22 * ss, y), nueva, font=f_t, fill=tinta)
-    return img.resize((ancho, alto), Image.LANCZOS)
-
-
 @functools.lru_cache(maxsize=4)
 def sprite_notificacion(app, de, texto):
     ss = 2
@@ -493,43 +259,6 @@ def sprite_notificacion(app, de, texto):
     t = render_lineas([texto], "dato", 32 * ss, color=(30, 30, 34))
     img.alpha_composite(t, (24 * ss, 108 * ss))
     return _sombra_texto(img.resize((w, h), Image.LANCZOS), 14, 0.45, 6)
-
-
-@functools.lru_cache(maxsize=2)
-def sprite_nota():
-    ss = 2
-    w, h = 300, 140
-    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rectangle([0, 0, w * ss - 1, h * ss - 1], fill=(255, 250, 220, 255))
-    f = fuente("manuscrita", 38 * ss)
-    palabras = GE.NOTA_RATON.split(" ")
-    d.text((18 * ss, 18 * ss), " ".join(palabras[:2]), font=f, fill=(80, 60, 120, 255))
-    d.text((18 * ss, 66 * ss), " ".join(palabras[2:]), font=f, fill=(80, 60, 120, 255))
-    return img.resize((w, h), Image.LANCZOS).rotate(-8, expand=True, resample=Image.BICUBIC)
-
-
-@functools.lru_cache(maxsize=2)
-def sprite_lata_abierta():
-    """Interior de la cajita de lata: los 20 dientes de leche, cada uno con su fecha."""
-    ss = 2
-    w, h = 470, 330
-    img = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 0, w * ss - 1, h * ss - 1], radius=36 * ss, fill=(186, 70, 64, 255))
-    d.rounded_rectangle([18 * ss, 18 * ss, (w - 18) * ss, (h - 18) * ss], radius=24 * ss, fill=(240, 226, 206, 255))
-    f = fuente("manuscrita", 17 * ss)
-    meses = ["mar", "may", "jun", "ago", "oct", "nov", "ene", "feb", "abr", "jun"]
-    for i in range(20):
-        fila, col = divmod(i, 5)
-        x = (52 + col * 84) * ss
-        y = (50 + fila * 66) * ss
-        d.ellipse([x - 14 * ss, y - 16 * ss, x + 14 * ss, y + 12 * ss], fill=(252, 250, 242, 255), outline=(200, 190, 170, 255), width=2 * ss)
-        d.ellipse([x - 6 * ss, y - 10 * ss, x + 2 * ss, y - 4 * ss], fill=(255, 255, 255, 255))
-        d.text((x - 26 * ss, y + 14 * ss), f"{(i * 7) % 27 + 1} {meses[i % 10]}", font=f, fill=(90, 70, 60, 255))
-    t = fuente("manuscrita", 28 * ss)
-    d.text((w * ss - 160 * ss, (h - 16) * ss - 34 * ss), GE.NOMBRE_HIJO, font=t, fill=(150, 50, 46, 255))
-    return img.resize((w, h), Image.LANCZOS)
 
 
 @functools.lru_cache(maxsize=8)
@@ -551,12 +280,268 @@ def sprite_cierre(clave):
 
 
 # ---------------------------------------------------------------------------
+# Papeles con texto (texturas de tarjetas y de la nota)
+# ---------------------------------------------------------------------------
+TINTA = (40, 50, 80, 255)
+TINTA_ROJA = (200, 60, 60, 255)
+
+
+@functools.lru_cache(maxsize=96)
+def sprite_tarjeta(titulo, lineas, tachadas=(), nueva=None, ancho=300, color=(252, 248, 236), k_tachar=1.0, k_nueva=1.0, ss=2):
+    """
+    Tarjeta de cita escrita a mano. `k_tachar` (0–1) dibuja la raya de la última fecha tachada
+    y `k_nueva` (0–1) escribe la fecha nueva de izquierda a derecha (para animar la escritura).
+    """
+    filas = 1 + len(lineas) + len(tachadas) + (1 if nueva else 0)
+    alto = 70 + filas * 46
+    img = Image.new("RGBA", (ancho * ss, alto * ss), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, ancho * ss - 1, alto * ss - 1], radius=10 * ss, fill=color + (255,))
+    d.rectangle([0, 0, ancho * ss, 16 * ss], fill=(150, 210, 196, 255))
+    f_t = fuente("manuscrita", 40 * ss)
+    y = 26 * ss
+    d.text((22 * ss, y), titulo, font=f_t, fill=TINTA)
+    y += 50 * ss
+    for l in lineas:
+        d.text((22 * ss, y), l, font=f_t, fill=TINTA)
+        y += 46 * ss
+    for i, l in enumerate(tachadas):
+        d.text((22 * ss, y), l, font=f_t, fill=(90, 96, 120, 255))
+        w = f_t.getlength(l)
+        k = k_tachar if i == len(tachadas) - 1 else 1.0
+        if k > 0:
+            x0, y0, x1, y1 = 18 * ss, y + 26 * ss, 26 * ss + w, y + 20 * ss
+            d.line([(x0, y0), (x0 + (x1 - x0) * k, y0 + (y1 - y0) * k)], fill=TINTA_ROJA, width=4 * ss)
+        y += 46 * ss
+    if nueva and k_nueva > 0:
+        capa = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(capa).text((22 * ss, y), nueva, font=f_t, fill=TINTA)
+        w = f_t.getlength(nueva)
+        corte = int(22 * ss + w * k_nueva)
+        mascara = Image.new("L", img.size, 0)
+        ImageDraw.Draw(mascara).rectangle([0, 0, corte, img.height], fill=255)
+        capa.putalpha(Image.fromarray(np.minimum(np.asarray(capa.getchannel("A")), np.asarray(mascara))))
+        img.alpha_composite(capa)
+    return img
+
+
+def tex_tarjeta(*args, **kw):
+    return _tex_tarjeta(args, tuple(sorted(kw.items())))
+
+
+@functools.lru_cache(maxsize=96)
+def _tex_tarjeta(args, kw):
+    return U.textura(sprite_tarjeta(*args, **dict(kw)))
+
+
+NOTA_LINEAS = (("Del Ratón", 0.10, 0.36), ("de los Dientes", 0.10, 0.74))  # texto, u inicial, v de la línea
+NOTA_PX = (360, 240)
+
+
+@functools.lru_cache(maxsize=64)
+def _metricas_nota():
+    f = fuente("manuscrita", 74)
+    return [f.getlength(t) / NOTA_PX[0] for t, _, _ in NOTA_LINEAS]
+
+
+@functools.lru_cache(maxsize=128)
+def tex_nota(k):
+    """Nota del Ratón de los Dientes con el texto escrito hasta `k` (0–1, por líneas)."""
+    w, h = NOTA_PX
+    img = Image.new("RGBA", (w, h), (255, 250, 222, 255))
+    d = ImageDraw.Draw(img)
+    f = fuente("manuscrita", 74)
+    largos = _metricas_nota()
+    total = sum(largos)
+    hecho = k * total
+    for (texto, u0, v), largo in zip(NOTA_LINEAS, largos):
+        if hecho <= 0:
+            break
+        capa = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        ImageDraw.Draw(capa).text((u0 * w, v * h - 52), texto, font=f, fill=(80, 60, 120, 255))
+        corte = int((u0 + min(hecho, largo)) * w)
+        mascara = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mascara).rectangle([0, 0, corte, h], fill=255)
+        capa.putalpha(Image.fromarray(np.minimum(np.asarray(capa.getchannel("A")), np.asarray(mascara))))
+        img.alpha_composite(capa)
+        hecho -= largo
+    del d
+    return U.textura(img)
+
+
+def punta_nota(k, t):
+    """(u, v) de la punta del lápiz cuando el texto va por `k`: avanza por la línea con pequeños bucles de letra."""
+    largos = _metricas_nota()
+    total = sum(largos)
+    hecho = k * total
+    for (texto, u0, v), largo in zip(NOTA_LINEAS, largos):
+        if hecho <= largo or (texto, u0, v) == NOTA_LINEAS[-1]:
+            u = u0 + min(hecho, largo)
+            return u, v - 0.06 + 0.07 * math.sin(t * 2 * math.pi * 6.5) + 0.02 * math.sin(t * 2 * math.pi * 11)
+        hecho -= largo
+    return NOTA_LINEAS[-1][1], NOTA_LINEAS[-1][2]
+
+
+# ---------------------------------------------------------------------------
+# Tarjetas en el marco del espejo (3D, en el plano del espejo)
+# ---------------------------------------------------------------------------
+# centro en pantalla con el encuadre base y giro (grados, como PIL: + antihorario)
+RANURAS = {0: ((885.0, 480.0), -6.0), 1: ((205.0, 520.0), 4.0), 2: ((800.0, 365.0), -3.0)}  # la 1 no tapa la puerta
+Z_MARCO = S.ESPEJO_Z - 3.0
+
+
+def ranura(indice, ancho_px, alto_px):
+    """(centro, ancho, alto, rot) en el mundo para que la tarjeta se vea en la ranura `indice` del marco."""
+    (X, Y), ang = RANURAS[indice]
+    cam = S.CAM
+    Xv, Yv = cam.a_virtual(X, Y)
+    s = cam.D / (cam.D - Z_MARCO)
+    k = 1.0 / (s * cam.zoom)
+    centro = (cam.cx + (Xv - cam.cx) / s, cam.cy + (Yv - cam.cy) / s, Z_MARCO)
+    return np.array(centro, np.float32), ancho_px * k, alto_px * k, J.rot_z(-math.radians(ang))
+
+
+TARJETAS = {
+    "hijo": dict(args=(GE.TARJETA_HIJO["titulo"], tuple(GE.TARJETA_HIJO["lineas"])), kw={}),
+    "mama_vieja": dict(args=(GE.TARJETA_MAMA["titulo"], (), tuple(GE.TARJETA_MAMA["tachadas"]) + (GE.TARJETA_MAMA["nueva"], "2 de mayo", "8 de nov.")), kw={}),
+    "nueva": dict(args=(GE.TARJETA_NUEVA["titulo"], tuple(GE.TARJETA_NUEVA["lineas"])), kw={"color": (255, 246, 228)}),
+}
+
+
+def medidas_tarjeta(nombre):
+    spr = sprite_tarjeta(*TARJETAS[nombre]["args"], **TARJETAS[nombre]["kw"])
+    return spr.width / 2, spr.height / 2  # tamaño en pantalla (ss=2)
+
+
+def tarjeta_en_ranura(nombre, indice):
+    w, h = medidas_tarjeta(nombre)
+    c, aw, ah, rot = ranura(indice, w, h)
+    tex = tex_tarjeta(*TARJETAS[nombre]["args"], **TARJETAS[nombre]["kw"])
+    return U.tarjeta(c, aw, ah, tex, rot)
+
+
+# ---------------------------------------------------------------------------
+# Encimera con las sombras de lo que está siempre encima (vaso, pasta)
+# ---------------------------------------------------------------------------
+@functools.lru_cache(maxsize=2)
+def _encimera_con_sombras(nombre):
+    img = S.capa_encimera(nombre).copy()
+    capa = Image.new("L", (W, H), 0)
+    d = ImageDraw.Draw(capa)
+    cam = S.CAM
+    vx, _, vz = U.VASO
+    for x, z, rx, rz, f in ((vx + 6, vz - 6, 52, 40, 0.75), (275, 158, 80, 24, 0.55), (S.PALANCA[0], S.PALANCA[1], 26, 20, 0.5)):
+        X, Y = cam.proyectar(x, S.ENCIMERA_Y, z)
+        Xa, _ = cam.proyectar(x + rx, S.ENCIMERA_Y, z)
+        _, Yf = cam.proyectar(x, S.ENCIMERA_Y, z - rz)
+        _, Yn = cam.proyectar(x, S.ENCIMERA_Y, z + rz)
+        ex = abs(float(Xa) - float(X))
+        d.ellipse([float(X) - ex, float(Yf), float(X) + ex, float(Yn)], fill=int(255 * f))
+    capa = capa.filter(ImageFilter.GaussianBlur(10))
+    negro = Image.new("RGBA", (W, H), (30, 18, 10, 0))
+    negro.putalpha(Image.fromarray((np.asarray(capa, np.float32) * 0.55 * (np.asarray(img.getchannel("A"), np.float32) / 255)).astype(np.uint8)))
+    img.alpha_composite(negro)
+    return img
+
+
+@functools.lru_cache(maxsize=16)
+def capa_utileria(nombre, vaso_cepillos, pasta, con_palanca):
+    """Vaso con cepillos, pasta, caño (y mando del agua) renderizados una vez con el encuadre base, con su t por subpíxel."""
+    prims = U.vaso()
+    colores = {"amarillo": U.AMARILLO, "azul": U.AZUL, "rosa": U.ROSA}
+    for k, c in enumerate(vaso_cepillos):
+        if c:
+            prims += U.cepillo_en_vaso(U.VASO, k, colores[c])
+    if pasta:
+        prims += U.tubo_pasta()[0]
+    prims += S.grifo(0.0, partes="todo" if con_palanca else "caño")
+    luz = J.NOCHE if nombre == "noche" else J.MANANA
+    img, x0, y0, tm = J.render(prims, luz, S.CAM, oclusor=S.oclusor, devolver_t="completo")
+    return img, x0, y0, tm
+
+
+# ---------------------------------------------------------------------------
+# Viñeta
+# ---------------------------------------------------------------------------
+@functools.lru_cache(maxsize=1)
+def vineta_suave():
+    """Oscurecimiento suave de los bordes (aspecto de cámara y mejor lectura de los textos)."""
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    d = np.sqrt(((xx - W / 2) / (W * 0.72)) ** 2 + ((yy - H * 0.5) / (H * 0.66)) ** 2)
+    a = np.clip((d - 0.62) / 0.6, 0, 1) ** 1.6 * 150
+    img = np.zeros((H, W, 4), np.uint8)
+    img[..., 3] = a.astype(np.uint8)
+    return Image.fromarray(img, "RGBA")
+
+
+# ---------------------------------------------------------------------------
+# Caminar con los pies apoyados
+# ---------------------------------------------------------------------------
+def caminata(t, t0, t1, a, b, tipo, escala=1.0, paso_rel=0.5, cierre=0.3):
+    """
+    Camina de a=(x, z) a b=(x, z) entre t0 y t1. Devuelve (x, z) del cuerpo, los pies
+    {"izq": (x, y, z), "der": …} plantados sin resbalar, el balanceo de los brazos y la
+    altura de la cadera necesaria para que las piernas lleguen al suelo (rebote natural).
+    """
+    P = PJ.TIPOS[tipo]
+    R = P["R"] * escala
+    ax, az = a
+    bx, bz = b
+    L = math.hypot(bx - ax, bz - az)
+    ux, uz = ((bx - ax) / L, (bz - az) / L) if L > 1e-6 else (0.0, 1.0)
+    paso = paso_rel * (P["muslo"] + P["pierna"]) * R
+    n = max(1, int(round(L / paso))) if L > 1e-6 else 0
+    paso = L / n if n else 1.0
+    k = progreso(t, t0, t1)
+    s = L * suave(k)
+    ancho = P["cadera"] * R * 0.45
+    y_tob = S.SUELO - 0.42 * R
+    pies, alturas = {}, {}
+    for f, (lado, sx) in enumerate((("der", 1), ("izq", -1))):
+        pos, lift = 0.0, 0.0
+        for j in range(1 + f, n + 1, 2):
+            ini, fin = (j - 1) * paso, j * paso
+            desde, hasta = max(0, j - 2) * paso, j * paso
+            if s >= fin:
+                pos = hasta
+                continue
+            if s > ini:
+                w = (s - ini) / paso
+                pos = desde + (hasta - desde) * suave(w)
+                lift = math.sin(math.pi * w) * 0.3 * R
+            break
+        if n and k >= 1.0 and pos < L - 1:  # paso final para juntar los pies
+            w = progreso(t, t1, t1 + cierre)
+            pos, lift = pos + (L - pos) * suave(w), math.sin(math.pi * w) * 0.18 * R
+        pies[lado] = (ax + ux * pos + sx * ancho, y_tob - lift, az + uz * pos)
+        alturas[lado] = lift
+    cx, cz = ax + ux * s, az + uz * s
+    largo = 0.985 * (P["muslo"] + P["pierna"]) * R
+    y_cadera = -1e9
+    for lado, sx in (("der", 1), ("izq", -1)):
+        px, py, pz = pies[lado]
+        dxz = math.hypot(px - (cx + sx * ancho), pz - (cz - 0.36 * R))
+        y_cadera = max(y_cadera, py - math.sqrt(max(largo**2 - dxz**2, 1.0)))
+    y_cadera = min(y_cadera, y_tob - largo * 0.999)  # de pie: piernas casi estiradas
+    fase = s / paso * math.pi if n else 0.0
+    balanceo = 0.32 * math.sin(fase) * min(1.0, k * 6, (1 - k) * 6 + 0.2)
+    return {"x": cx, "z": cz, "pies": pies, "balanceo": balanceo, "y_cadera": y_cadera, "R": R}
+
+
+def cabeza_desde_cadera(tipo, y_cadera, escala=1.0):
+    P = PJ.TIPOS[tipo]
+    return y_cadera - (P["cadera_y"] + 0.25) * P["R"] * escala
+
+
+# ---------------------------------------------------------------------------
 # Renderizador
 # ---------------------------------------------------------------------------
 class Renderizador:
     def __init__(self, plan=None):
         self.escenas = {e["id"]: e for e in GE.ESCENAS}
         self.orden = [e["id"] for e in GE.ESCENAS]
+        self.avisos = []
+        self.cam = S.CAM
 
     def escena_en(self, t):
         for e in GE.ESCENAS:
@@ -575,60 +560,120 @@ class Renderizador:
             self.capa_textos(img, t, e)
         return np.asarray(img.convert("RGB"))
 
-    def cuadro(self, t, e):
-        """Imagen de la escena (sin textos), con el acercamiento lento si la escena lo pide."""
-        img = getattr(self, f"escena_{e['id']}")(t, e)
+    def camara(self, t, e):
+        """Cámara de la escena: encuadre base y, si la escena lo pide, un acercamiento lento."""
         zoom = e.get("zoom")
-        if zoom:
-            z = 1.0 + (zoom["hasta"] - 1.0) * suave(progreso(t, e["inicio"], e["fin"]))
-            fx, fy = zoom["foco"]
-            img = img.transform((W, H), Image.AFFINE, (1 / z, 0, fx - fx / z, 0, 1 / z, fy - fy / z), resample=Image.BILINEAR)
-        return img
+        if not zoom:
+            return S.CAM, 1.0, (W / 2, H / 2)
+        z2 = 1.0 + (zoom["hasta"] - 1.0) * suave(progreso(t, e["inicio"], e["fin"]))
+        f2 = zoom["foco"]
+        zb, fb = S.CAM.zoom, S.CAM.foco
+        z = zb * z2
+        f = tuple((f2[i] * (1 - z2) + fb[i] * z2 * (1 - zb)) / (1 - z) for i in range(2))
+        return J.Camara(S.CAM.D, S.CAM.cx, S.CAM.cy, z, f), z2, f2
+
+    def cuadro(self, t, e):
+        self.cam, self.z2, self.f2 = self.camara(t, e)
+        self.t_escena = t - e["inicio"]
+        self.e = e
+        self.palanca = 0.0
+        return getattr(self, f"escena_{e['id']}")(t, e)
 
     # ---------------------------------------------------------- composición
-    def base(self, luz_nombre, k_manana=None):
+    def capas_base(self, luz_nombre, k_manana=None):
         if k_manana is None:
-            return fondo_bano(luz_nombre).copy(), encimera(luz_nombre)
-        a = Image.blend(fondo_bano("noche"), fondo_bano("manana"), k_manana)
-        b = Image.blend(encimera("noche"), encimera("manana"), k_manana)
-        return a, b
+            fondo, enc = S.fondo_bano(luz_nombre), _encimera_con_sombras(luz_nombre)
+        else:
+            fondo = Image.blend(S.fondo_bano("noche"), S.fondo_bano("manana"), k_manana)
+            enc = Image.blend(_encimera_con_sombras("noche"), _encimera_con_sombras("manana"), k_manana)
+        if self.z2 > 1.0001:
+            return S.acercar(fondo, self.z2, self.f2), S.acercar(enc, self.z2, self.f2)
+        return fondo.copy(), enc
 
     def luz(self, nombre, k_manana=None):
         if k_manana is not None:
             return J.NOCHE.mezclar(J.MANANA, k_manana)
         return J.NOCHE if nombre == "noche" else J.MANANA
 
-    def componer(self, t, luz_nombre, prims, extras=None, k_manana=None, cepillo_vaso=True, agua=0.0, tarjetas=None, encima=None):
-        """Decorado + encimera + personajes (z-buffer conjunto) + agua + tarjetas del marco."""
-        fondo, enc = self.base(luz_nombre, k_manana)
-        fondo.alpha_composite(enc)
+    def componer(self, t, luz_nombre, prims, k_manana=None, agua=0.0, sombras=(), marco=(), marco_sombra=1.0):
+        """
+        Pared del fondo → sombra de los personajes → encimera → sombras de contacto →
+        personajes y objetos (z-buffer conjunto, ocultos por la encimera) → agua → tarjetas del marco.
+        """
+        cam = self.cam
+        luz = self.luz(luz_nombre, k_manana)
+        fondo, enc = self.capas_base(luz_nombre, k_manana)
+        vaso, pasta = getattr(self, "utileria", (("amarillo", "azul"), True))
+        palanca_movil = self.palanca > 0.0
         nombre = luz_nombre if k_manana is None else ("manana" if k_manana > 0.5 else "noche")
-        if cepillo_vaso:
-            spr, x0, y0 = cepillo_en_vaso(nombre)
+        fija, fx0, fy0, ftm = capa_utileria(nombre, vaso, pasta, not palanca_movil)
+        zoom2 = (self.z2, self.f2[0], self.f2[1]) if self.z2 > 1.0001 else None
+        prims = list(prims)
+        if palanca_movil:
+            prims += S.grifo(self.palanca, partes="palanca")
+        spr, x0, y0, tmap = J.render(prims, luz, cam, oclusor=S.oclusor, devolver_t=True, mapa_t=(ftm, fx0, fy0, 2, zoom2) if ftm is not None else None)
+        if spr is not None:
+            sh, pad = J.sombra_de(spr, (26, 34), 36, 0.26)
+            fondo.alpha_composite(sh, (x0 - pad, y0 - pad))
+        fondo.alpha_composite(enc)
+        if sombras:
+            self.sombras_contacto(fondo, sombras)
+        if fija is not None:
+            capa = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            capa.alpha_composite(fija, (fx0, fy0))
+            fondo.alpha_composite(S.acercar(capa, self.z2, self.f2) if zoom2 else capa)
+        if spr is not None:
             fondo.alpha_composite(spr, (x0, y0))
-        if extras:
-            extras(fondo)
-        if prims:
-            spr, x0, y0 = J.render(prims, self.luz(luz_nombre, k_manana))
-            if spr is not None:
-                sh, pad = J.sombra_de(spr, (26, 10), 26, 0.32)
-                fondo.alpha_composite(sh, (x0 - pad, y0 - pad))
-                fondo.alpha_composite(spr, (x0, y0))
-        if encima:
-            encima(fondo)
-        chorro(fondo, t, agua)
-        for tarjeta in tarjetas or []:
-            self.tarjeta_marco(fondo, *tarjeta)
+        if agua > 0.01:
+            self.dibujar_agua(fondo, t, agua, luz, spr, x0, y0, tmap)
+        if marco:
+            spm, mx0, my0 = J.render(list(marco), luz, cam)
+            if spm is not None:
+                if marco_sombra > 0:
+                    sh, pad = J.sombra_de(spm, (8, 12), 12, 0.42 * marco_sombra)
+                    fondo.alpha_composite(sh, (mx0 - pad, my0 - pad))
+                fondo.alpha_composite(spm, (mx0, my0))
         return fondo
 
-    def tarjeta_marco(self, img, sprite, alfa=1.0, indice=0):
-        """Tarjeta metida en el marco del espejo (esquina superior derecha, un poco girada)."""
-        if alfa <= 0.01:
+    def dibujar_agua(self, img, t, intensidad, luz, spr, x0, y0, tmap):
+        prims = S.chorro(t, intensidad)
+        if not prims:
             return
-        rot = sprite.rotate([-6, 5, -3][indice % 3], expand=True, resample=Image.BICUBIC)
-        sh = _sombra_texto(rot, 10, 0.4, 6)
-        x, y = POS_TARJETAS.get(indice, MARCO)
-        pegar(img, sh, x, y, alfa=alfa)
+        sa, ax0, ay0, ta = J.render(prims, luz, self.cam, oclusor=S.oclusor, devolver_t=True)
+        if sa is None:
+            return
+        a = np.asarray(sa, np.float32).copy()
+        if spr is not None:  # lo que está delante del chorro (la mano, el cepillo) lo tapa
+            h, w = ta.shape
+            tm = np.full((h, w), np.inf, np.float32)
+            ox, oy = x0 - ax0, y0 - ay0
+            ys0, xs0 = max(0, oy), max(0, ox)
+            ys1, xs1 = min(h, oy + tmap.shape[0]), min(w, ox + tmap.shape[1])
+            if ys1 > ys0 and xs1 > xs0:
+                tm[ys0:ys1, xs0:xs1] = tmap[ys0 - oy : ys1 - oy, xs0 - ox : xs1 - ox]
+            a[..., 3] *= ta < tm
+        a[..., 3] *= 0.78 * intensidad
+        a[..., :3] = np.clip(a[..., :3] * 1.08 + 12, 0, 255)
+        img.alpha_composite(Image.fromarray(a.astype(np.uint8), "RGBA"), (ax0, ay0))
+
+    def sombras_contacto(self, img, sombras):
+        """Sombras suaves sobre la encimera bajo lo que se apoya o está muy cerca: (x, z, rx, rz, fuerza)."""
+        capa = Image.new("L", (W, H), 0)
+        d = ImageDraw.Draw(capa)
+        for x, z, rx, rz, fuerza in sombras:
+            if fuerza <= 0.01:
+                continue
+            y = S.ENCIMERA_Y
+            X, Y = self.cam.proyectar(x, y, z)
+            Xa, _ = self.cam.proyectar(x + rx, y, z)
+            _, Yf = self.cam.proyectar(x, y, z - rz)
+            _, Yn = self.cam.proyectar(x, y, z + rz)
+            ex = abs(float(Xa) - float(X))
+            d.ellipse([float(X) - ex, float(Yf), float(X) + ex, float(Yn)], fill=int(255 * min(1.0, fuerza)))
+        capa = capa.filter(ImageFilter.GaussianBlur(9))
+        negro = Image.new("RGBA", (W, H), (30, 18, 10, 0))
+        negro.putalpha(capa.point(lambda v: int(v * 0.55)))
+        img.alpha_composite(negro)
 
     # --------------------------------------------------------------- textos
     def capa_textos(self, img, t, e):
@@ -642,7 +687,7 @@ class Renderizador:
         if e.get("subtitulo"):
             a = min(progreso(t, e["inicio"] + 0.25, e["inicio"] + 0.55), 1 - progreso(t, e["fin"] - 0.55, e["fin"] - 0.25))
             if a > 0:
-                pegar(img, sprite_subtitulo(e["subtitulo"]), W / 2, 1190, alfa=a)
+                pegar(img, sprite_subtitulo(e["subtitulo"]), W / 2, Y_SUBTITULO, alfa=a)
         if e.get("salto"):
             a = min(progreso(t, e["inicio"] + 0.1, e["inicio"] + 0.5), 1 - progreso(t, e["fin"] - 0.3, e["fin"]))
             spr = sprite_salto(tuple(e["salto"]))
@@ -670,106 +715,176 @@ class Renderizador:
         else:
             numero = ini
         spr = sprite_contador(rotulo, numero, tuple(tuple(x) for x in lineas))
-        # fundido corto cuando cambian rótulo/líneas respecto a la escena anterior
         previa = self.escenas.get(e["id"] - 1)
         a = 1.0
         if previa is None or previa.get("contador") is None or previa["contador"][0] != rotulo or previa["contador"][3] != lineas:
             a = progreso(t, e["inicio"], e["inicio"] + 0.3)
         pegar(img, spr, 44 - 40, 700 - 40, alfa=0.95 * a, ancla="esquina")
 
-    # ================================================================ ESCENAS
-    POS_MAMA = (470, 760, -170)
-    POS_PUERTA = (900, 883)  # cabeza de quien mira desde la puerta (pies en el suelo del fondo)
-    ESC_PUERTA = 0.7
-    Z_PUERTA = -520
-    POS_NINO = (745, 945)
-    POS_PEQUENO = (745, 990)
-
-    def _mama(self, t, edad, pose, pos=None, escala=E):
-        x, y, z = pos or self.POS_MAMA
-        y += respiracion(t) * escala / E
+    # ======================================================= construcción
+    def persona(self, t, quien, pose, pos, escala=1.0, desfase=0.0, respira=True):
+        """Personaje con respiración, parpadeo y un leve vaivén de cabeza; registra si alguna mano no llega."""
+        x, y, z = pos
+        if respira:
+            y += respiracion(t, desfase)
         pose = dict(pose)
-        pose["cara"] = parpadeo(t, pose.get("cara", "sonrisa"))
-        pose.setdefault("hasta_y", LINEA + 80)
-        prims, info = mama(edad).construir(x, y, pose, escala=escala, z0=z)
-        return limitar_cuerpo(prims), info
+        pose["cara"] = parpadeo(t, pose.get("cara", "neutral"), desfase)
+        pose["giro"] = pose.get("giro", 0.0) + 0.035 * math.sin(t * 0.9 + desfase * 2.1)
+        prims, info = quien.construir(x, y, pose, escala=escala, z0=z, camara=S.CAM)
+        for lado, err in info["error"].items():
+            if err > 6 and pose.get(f"mano_{lado}") is not None:
+                self.avisos.append((round(t, 2), quien.tipo, lado, round(err, 1)))
+        return prims, info
 
-    def _mama_puerta(self, t, edad, pose, avance=0.0, destino=None, escala_destino=E):
-        """Mamá en la puerta (avance 0) o caminando hacia `destino` (avance 1)."""
-        destino = destino or self.POS_MAMA
-        x = lerp(self.POS_PUERTA[0], destino[0], avance)
-        y = lerp(self.POS_PUERTA[1], destino[1], avance)
-        z = lerp(self.Z_PUERTA, destino[2], avance)
-        esc = lerp(self.ESC_PUERTA, escala_destino, avance)
+    def info(self, t, quien, pose, pos, escala=1.0, desfase=0.0):
+        """Solo la cabeza, la boca y los hombros (para preparar agarres antes de construir)."""
+        x, y, z = pos
+        pose = dict(pose, solo_hombros=True)
+        pose["giro"] = pose.get("giro", 0.0) + 0.035 * math.sin(t * 0.9 + desfase * 2.1)
+        return quien.construir(x, y + respiracion(t, desfase), pose, escala=escala, z0=z, camara=S.CAM)[1]
+
+    @staticmethod
+    def cepillo_en_boca(t, info, eje, color, amp=8.0, f=2.8, fase=0.0, pasta=0.0, hondo=7.0, desplaza=(0.0, 0.0, 0.0)):
+        """
+        Cepillo con la cabeza dentro de la boca de `info` y el mango hacia `eje`: vaivén corto a lo
+        largo de los dientes. Devuelve (primitivas del cepillo, dict de agarre para la mano).
+        """
+        hx, hy, hz = info["cabeza"]
+        m = np.asarray(info["boca"], np.float32)
+        e = N(eje)
+        horiz = N((e[0], 0.0, e[2] * 0.4))
+        v = math.sin(2 * math.pi * f * t + fase)
+        off = horiz * amp * v + np.array([0, 2.2 * math.sin(4 * math.pi * f * t + fase), 0], np.float32)
+        hacia = N(np.array([hx, hy, hz], np.float32) - m)
+        cab = m + hacia * hondo + off + np.asarray(desplaza, np.float32)
+        prims, agarre = U.cepillo(cab, e, hacia, color, pasta)
+        return prims, {"agarre": tuple(agarre), "eje": tuple(-e)}
+
+    @staticmethod
+    def contar(info, lado, n, pulsos=(), alto=1.15):
+        """Mano levantada junto a la cara mostrando `n` dedos al espejo (con un pequeño golpe en cada número)."""
+        hx, hy, hz = info["cabeza"]
+        R = info["R"]
+        sx = -1 if lado == "izq" else 1
+        golpe = 9.0 * sum(pulsos)
+        centro = (hx + sx * 1.02 * R, hy + alto * R + golpe, hz + 1.35 * R)
+        return {"centro": centro, "forma": "contar", "dir": (sx * 0.12, -1.0, 0.12), "nrm": (-sx * 0.2, 0.05, 1.0), "dedos": PJ.cuenta_dedos(n), "polo": (sx * 0.5, 1.0, 0.35)}
+
+    def mama_puerta(self, t, edad, pose, desfase=0.4):
+        """Mamá de pie en la puerta, mirando al lavabo."""
+        x, z = PUERTA_XZ
         pose = dict(pose)
         pose.setdefault("piernas", "de_pie")
-        pose.setdefault("hasta_y", 0)
-        return self._mama(t, edad, pose, (x, y, z), esc)
+        return self.persona(t, mama(edad), pose, (x, YM, z), desfase=desfase)
 
-    def _nino(self, t, edad, pose, pos, pegatina=False, z=0.0, escala=E, limitar=True):
-        x, y = pos
-        y += respiracion(t, 1.3)
+    def mama_caminando(self, t, edad, t0, t1, a, b, pose, giro_cuerpo=0.0):
+        """Mamá caminando de a=(x, z) a b=(x, z) entre t0 y t1 (tiempos de la escena)."""
+        w = caminata(self.t_escena, t0, t1, a, b, "adulta")
         pose = dict(pose)
-        pose["cara"] = parpadeo(t, pose.get("cara", "neutral"), 1.7)
-        if limitar:
-            pose.setdefault("hasta_y", LINEA + 80)
-        prims, info = hijo(edad, pegatina).construir(x, y, pose, escala=escala, z0=z)
-        return (limitar_cuerpo(prims) if limitar else prims), info
+        pose["piernas"] = {"pies": w["pies"]}
+        pose["balanceo"] = w["balanceo"]
+        pose.setdefault("giro_cuerpo", giro_cuerpo)
+        y = cabeza_desde_cadera("adulta", w["y_cadera"])
+        return self.persona(t, mama(edad), pose, (w["x"], y, w["z"]), respira=False)
 
-    def _nieta(self, t, pose, pos):
-        x, y = pos
-        pose = dict(pose)
-        pose["cara"] = parpadeo(t, pose.get("cara", "neutral"), 0.6)
-        pose.setdefault("hasta_y", LINEA + 80)
-        prims, info = nieta().construir(x, y + respiracion(t, 0.8), pose, escala=E)
-        return limitar_cuerpo(prims), info
+    # utilería fija de la encimera (se renderiza una vez y tapa lo que pase por detrás)
+    def encimera_objetos(self, t, vaso_cepillos=("amarillo", "azul"), pasta=True):
+        self.utileria = (tuple(vaso_cepillos), pasta)
+        return []
 
-    def _adulto(self, t, pose, pos=None):
-        x, y, z = pos or self.POS_MAMA
-        pose = dict(pose)
-        pose["cara"] = parpadeo(t, pose.get("cara", "neutral"), 2.2)
-        pose.setdefault("hasta_y", LINEA + 80)
-        prims, info = hijo(32).construir(x, y + respiracion(t, 0.4), pose, escala=E, z0=z)
-        return limitar_cuerpo(prims), info
-
+    # ================================================================ ESCENAS
+    # ------------------------------------------------------------ apoyos
     @staticmethod
-    def boca(info, dz=40):
-        cx, cy = info["cabeza"]
-        R = info["R"]
-        return (cx - info["giro"] * R * 0.3, cy + R * 0.34, R * 0.96 + dz)
+    def mano_en_hombro(info_otro, lado_otro="izq"):
+        """Mano apoyada encima del hombro de otra persona."""
+        hx, hy, hz = info_otro["hombros"][lado_otro]
+        R = info_otro["R"]
+        return {"palma": (hx + 6, hy - 0.42 * R, hz + 6), "dir": (0.75, 0.15, 0.65), "nrm": (0.0, 1.0, 0.1), "forma": "abierta"}
 
-    def objetivo_cepillar(self, t, info_boca, lado=-1):
-        """(mano objetivo, punta del cepillo) para cepillar la boca de `info_boca` desde el lado `lado`."""
-        b = self.boca(info_boca)
-        return cepillado((b[0] + lado * 46, b[1] + 8, b[2] + 34), t), (b[0] + lado * 4, b[1] - 2, b[2] + 10)
+    def tarjeta_mano(self, nombre, pinza, rot, tex=None, polo=(0.0, 0.9, 0.45)):
+        """Tarjeta sujeta en pinza por su esquina inferior izquierda (la mano y la tarjeta van juntas)."""
+        w, h = medidas_tarjeta(nombre)
+        _, aw, ah, _ = ranura(0, w, h)
+        R = np.asarray(rot, np.float32)
+        local = np.array([-aw / 2 + 13, ah / 2 - 15, -1.6], np.float32)
+        centro = np.asarray(pinza, np.float32) - R @ local
+        tex = tex if tex is not None else tex_tarjeta(*TARJETAS[nombre]["args"], **TARJETAS[nombre]["kw"])
+        mano = {"pinza": tuple(pinza), "dir": tuple(R @ np.array([0.5, -0.86, 0.1], np.float32)), "nrm": tuple(R @ np.array([0.1, 0.0, -1.0], np.float32)), "polo": polo}
+        return U.tarjeta(centro, aw, ah, tex, R), mano
 
-    @staticmethod
-    def mano(info, lado="der"):
-        return info["manos"][lado]
+    def meter_en_marco(self, lt, nombre, indice, t_sube, t_llega, t_suelta, pinza_ini, rot_ini=(-0.35, 0.08), via=None, reposo=None, inclinacion=0.5, polo=(0.0, 0.9, 0.45)):
+        """
+        Lleva una tarjeta de la mano a su ranura del marco (subiendo por `via`, un punto intermedio que
+        evita las caras), la suelta y la mano vuelve a `reposo` por el mismo camino. Devuelve (prims de la
+        tarjeta en mano o None, spec de la mano o None, inclinación del cuerpo, tarjeta del marco o None,
+        fuerza de su sombra).
+        """
+        w, h = medidas_tarjeta(nombre)
+        c_r, aw, ah, R_r = ranura(indice, w, h)
+        local = np.array([-aw / 2 + 13, ah / 2 - 15, -1.6], np.float32)
+        pinza_r = c_r + R_r @ local
+        ang_r = math.atan2(float(R_r[1, 0]), float(R_r[0, 0]))
+        p_ini = np.asarray(pinza_ini, np.float32)
+        p_via = np.asarray(via, np.float32) if via is not None else p_ini * 0.45 + pinza_r * 0.55 + np.array([0, -40, -30], np.float32)
+        p_rep = np.asarray(reposo, np.float32) if reposo is not None else p_ini + np.array([0, 120, -40], np.float32)
+        k = suave(progreso(lt, t_sube, t_llega))
+        incl = inclinacion * suave(progreso(lt, t_sube + 0.15, t_llega - 0.1)) * (1 - suave(progreso(lt, t_suelta + 0.1, t_suelta + 0.75)))
+        if lt < t_suelta:
+            p = np.array(curva(lt, [(t_sube, tuple(p_ini)), (t_sube + (t_llega - t_sube) * 0.45, tuple(p_via)), (t_llega, tuple(pinza_r)), (t_suelta, tuple(pinza_r + np.array([0, -3, 0], np.float32)))]), np.float32)
+            ax = rot_ini[0] * (1 - k)
+            az = rot_ini[1] * (1 - k) + ang_r * k
+            R = J.rot_z(az) @ J.rot_x(ax)
+            prims, mano = self.tarjeta_mano(nombre, p, R, polo=polo)
+            return prims, mano, incl, None, 0.0
+        marco = tarjeta_en_ranura(nombre, indice)
+        mano = None
+        t_fin = t_suelta + 0.85
+        if lt < t_fin:  # suelta y la mano vuelve por el mismo camino, sin cruzar caras
+            p = np.array(curva(lt, [(t_suelta, tuple(pinza_r + np.array([0, -3, 0], np.float32))), (t_suelta + 0.12, tuple(pinza_r + np.array([0, 25, -45], np.float32))), (t_suelta + 0.45, tuple(p_via)), (t_fin, tuple(p_rep))]), np.float32)
+            d = R_r @ np.array([0.5, -0.86, 0.1], np.float32)
+            mano = {"palma": tuple(p), "dir": tuple(d), "nrm": tuple(R_r @ np.array([0.1, 0, -1.0], np.float32)), "forma": "abierta", "polo": polo}
+        return None, mano, incl, marco, suave(progreso(lt, t_suelta + 0.15, t_suelta + 0.45))
 
-    def _tarjeta_hijo(self, alfa=1.0):
-        return (sprite_tarjeta(GE.TARJETA_HIJO["titulo"], tuple(GE.TARJETA_HIJO["lineas"])), alfa, 0)
+    # Mano derecha de mamá (del lado del vaso) o izquierda (del lado del niño)
+    EJE_MAMA = (0.86, 0.28, 0.45)  # mango hacia mamá, que está a la derecha del niño
 
-    def _tarjeta_mama_vieja(self):
-        tachadas = tuple(GE.TARJETA_MAMA["tachadas"]) + (GE.TARJETA_MAMA["nueva"], "2 de mayo", "8 de nov.")
-        return sprite_tarjeta(GE.TARJETA_MAMA["titulo"], (), tachadas, None)
+    def mano_en_encimera(self, x, lado="der", z=64.0):
+        sx = -1 if lado == "izq" else 1
+        return {"palma": (x, S.ENCIMERA_Y - 8, z), "dir": (-sx * 0.1, 0.25, 1.0), "nrm": (0, 1, 0), "forma": "abierta"}
 
-    POS_MAMA_BEBE = (540, 885, -170)  # inclinada hacia el bebé sentado en la encimera
-    POS_BEBE = (700, 1290)
+    def bebe_y_mama(self, t, lt, escala=1.0, fase=0.0, trae=None):
+        """Bebé sentado en la encimera; mamá (a su derecha) lo sostiene y le cepilla el diente."""
+        ib = self.info(t, hijo(0.7), {"cara": "abierta"}, BEBE, escala=escala, desfase=1.1)
+        mb = np.asarray(ib["boca"], np.float32)
+        eje = N((0.78, 0.3, 0.55))
+        if trae is not None and lt < trae:  # trae el cepillo con su grano de pasta desde la encimera, en arco
+            cab_final = mb + N(np.asarray(ib["cabeza"]) - mb) * 7
+            cab = np.array(curva(lt, [(0.0, (700, 1110, 150)), (trae * 0.5, (672, 1070, 205)), (trae, tuple(cab_final))]), np.float32)
+            cep, agarre = U.cepillo(cab, eje, (-0.3, 0, -1), U.AMARILLO, pasta=0.35)
+            mano_izq = {"agarre": tuple(agarre), "eje": tuple(-eje)}
+        else:
+            cep, mano_izq = self.cepillo_en_boca(t, ib, eje, U.AMARILLO, amp=5.0, f=2.4, fase=fase, pasta=0.35)
+        xb, yb, zb = BEBE
+        R = ib["R"]
+        abre = trae is None or lt > trae - 0.05
+        mira_b = None
+        if trae is not None and lt < trae + 0.3:  # sigue el cepillo con la mirada, sin agachar del todo la cabeza
+            cc = np.asarray(cep[0].c, np.float32)
+            mira_b = (float(cc[0]), float(min(cc[1], BEBE[1] + 60)), float(cc[2]) + 300)
+        pb, _ = self.persona(t, hijo(0.7), {"cara": "abierta" if abre else "sonrisa", "piernas": "sentado",
+                                            "mano_izq": (xb - 34, yb + 2.75 * R, zb + 40), "mano_der": (xb + 34, yb + 2.75 * R, zb + 40),
+                                            "mirar": mira_b}, BEBE, escala=escala, desfase=1.1)
+        sosten = {"palma": (xb + R * 0.98, yb + 1.95 * R, zb - 26), "dir": (-0.15, 1.0, 0.2), "nrm": (-1.0, 0.0, 0.1), "forma": "abierta"}
+        pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "giro_cuerpo": -0.28, "inclinacion": 0.1, "mano_izq": mano_izq, "mano_der": sosten,
+                                           "mirar": tuple(ib["cabeza"]) if lt < 2.2 else None}, MAMA_BEBE)
+        sombras = [(xb, zb + 40, 70, 45, 0.5), (xb - 30, zb + 150, 50, 30, 0.25)]
+        return pm + pb + cep, sombras
 
-    # 1 · Portada: mamá sienta al bebé en el lavabo y le pone pasta del tamaño de un grano de arroz
+    # 1 · Portada: mamá sostiene al bebé sentado en la encimera y le cepilla su primer diente
     def escena_1(self, t, e):
         lt = t - e["inicio"]
-        abre = lt > 1.5
-        pb, ib = self._nino(t, 0.7, {"cara": "abierta" if abre else "sonrisa", "piernas": "sentado", "mano_izq": (620, 1510, 90), "mano_der": (780, 1510, 90)}, self.POS_BEBE, escala=1.45, limitar=False)
-        objetivo, punta = self.objetivo_cepillar(t, ib)
-        if not abre:  # acerca el cepillo con la pasta
-            b = self.boca(ib)
-            objetivo = kf(lt, [(0.0, (560, 1440, 120)), (1.5, (b[0] - 80, b[1] + 50, b[2] + 40))])
-            punta = (objetivo[0] + 34, objetivo[1] - 50, objetivo[2] + 10)
-        pm, im = self._mama(t, 26, {"cara": "sonrisa", "giro": 0.35, "cabeceo": 0.45, "mano_der": objetivo, "mano_izq": (600, 1450, 60)}, self.POS_MAMA_BEBE)
-        cep = cepillo(self.mano(im), punta, (238, 196, 70), pasta=True)
-        return self.componer(t, "noche", pm + pb + cep, agua=1 - progreso(lt, 0.8, 1.2))
+        prims, sombras = self.bebe_y_mama(t, lt, trae=1.3)
+        return self.componer(t, "noche", prims + self.encimera_objetos(t), sombras=sombras)
 
     # 2 · Mañana y noche: el bebé crece hasta los 2 años en el mismo encuadre
     def escena_2(self, t, e):
@@ -777,250 +892,550 @@ class Renderizador:
         paso = 0.66
         i = int(lt / paso)
         k_trans = progreso(lt - i * paso, paso - 0.2, paso)
-        img = self._fase_2(t, i)
+        img = self._fase_2(t, lt, i)
         if k_trans > 0 and lt < e["fin"] - e["inicio"] - paso * 0.5:
-            img = Image.blend(img, self._fase_2(t, i + 1), k_trans)
+            img = Image.blend(img, self._fase_2(t, lt, i + 1), k_trans)
         return img
 
-    def _fase_2(self, t, i):
+    def _fase_2(self, t, lt, i):
         luz = "manana" if i % 2 == 0 else "noche"
         edad = [0.7, 1.0, 1.4, 1.7, 2.0, 2.0, 2.0][min(i, 6)]
         if edad < 1.2:
-            pb, ib = self._nino(t, 0.7, {"cara": "abierta", "piernas": "sentado", "mano_izq": (620, 1510, 90), "mano_der": (780, 1510, 90)}, self.POS_BEBE, escala=1.45 + 0.1 * (edad - 0.7), limitar=False)
-            pos_m = self.POS_MAMA_BEBE
+            prims, sombras = self.bebe_y_mama(t, 5.0, escala=1.0 + 0.08 * (edad - 0.7), fase=i)
         else:
             k = (edad - 1.4) / 0.6
-            pb, ib = self._nino(t, 2.0, {"cara": "abierta"}, (self.POS_PEQUENO[0], self.POS_PEQUENO[1] + 30 * (1 - k)), escala=E * (0.88 + 0.12 * k))
-            pos_m = self.POS_MAMA
-        objetivo, punta = self.objetivo_cepillar(t, ib)
-        pm, im = self._mama(t, 26, {"cara": "sonrisa", "giro": 0.35, "cabeceo": 0.3, "mano_der": objetivo}, pos_m)
-        return self.componer(t, luz, pm + pb + cepillo(self.mano(im), punta, (238, 196, 70)))
+            esc = 0.9 + 0.1 * k
+            pos = (PEQ[0], y_cabeza("pequeno", 330 + 40 * (1 - k), esc), PEQ[2])
+            ib = self.info(t, hijo(2.0), {"cara": "abierta"}, pos, escala=esc, desfase=1.7)
+            cep, mano_izq = self.cepillo_en_boca(t, ib, self.EJE_MAMA, U.AMARILLO, amp=7.0, f=2.7, fase=i, pasta=0.5)
+            pb, _ = self.persona(t, hijo(2.0), {"cara": "abierta"}, pos, escala=esc, desfase=1.7)
+            pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "giro_cuerpo": -0.18, "mano_izq": mano_izq, "mano_der": self.mano_en_encimera(MAMA[0] + 150, "der", 60), "mirar": tuple(ib["cabeza"]) if i % 2 else None}, MAMA)
+            prims, sombras = pm + pb + cep, [(MAMA[0] + 150, 60, 40, 22, 0.4)]
+        return self.componer(t, luz, prims + self.encimera_objetos(t), sombras=sombras)
 
     # 3 · El niño aprieta la boca; mamá hace caras al espejo y cuenta con los dedos
     def escena_3(self, t, e):
         lt = t - e["inicio"]
-        abre = lt > 2.2
-        pb, ib = self._nino(t, 2.0, {"cara": "abierta" if abre else "apretada"}, self.POS_PEQUENO)
-        objetivo, punta = self.objetivo_cepillar(t, ib)
-        if not abre:
-            b = self.boca(ib)
-            objetivo = (b[0] - 80, b[1] + 50, b[2] + 40)
-            punta = (objetivo[0] + 34, objetivo[1] - 50, objetivo[2] + 10)
-        dedos = 1 + int(limitar((lt - 0.6) / 0.55, 0, 4))
-        pm, im = self._mama(t, 26, {"cara": "mueca" if not abre else "sonrisa", "giro": -0.1, "mano_der": objetivo, "mano_izq": (330, 720 + math.sin(t * 6) * 6, 80), "dedos_izq": dedos})
-        return self.componer(t, "noche", pm + pb + cepillo(self.mano(im), punta, (238, 196, 70)))
+        abre = lt > 2.25
+        cara_n = "apretada" if lt < 2.0 else ("feliz" if lt < 2.25 else "abierta")
+        ib = self.info(t, hijo(2.0), {"cara": cara_n}, PEQ, desfase=1.7)
+        if not abre:  # espera junto a los labios cerrados, moviéndolo un poco
+            cep, mano_izq = self.cepillo_en_boca(t, ib, self.EJE_MAMA, U.AMARILLO, amp=2.5, f=1.1, pasta=0.5, hondo=-16, desplaza=(14, 4, 0))
+        else:
+            entra = suave(progreso(lt, 2.25, 2.55))
+            cep, mano_izq = self.cepillo_en_boca(t, ib, self.EJE_MAMA, U.AMARILLO, amp=7.0 * entra, f=2.7, pasta=0.5, hondo=-16 + 23 * entra, desplaza=(14 * (1 - entra), 4 * (1 - entra), 0))
+        pb, _ = self.persona(t, hijo(2.0), {"cara": cara_n}, PEQ, desfase=1.7)
+        cuentas = [1.0, 1.6, 2.2, 2.8, 3.4]
+        n = escalon(lt, cuentas)
+        im0 = self.info(t, mama(26), {"giro_cuerpo": -0.15}, MAMA)
+        sube = suave(progreso(lt, 0.25, 0.75))
+        mano_der = None
+        if sube > 0.01:
+            mano_der = self.contar(im0, "der", n, [pulso(lt, [c + 0.06], 0.07) for c in cuentas])
+            if sube < 0.99:  # la mano sube desde la cadera hasta junto a la cara
+                hx, hy, hz = im0["hombros"]["der"]
+                ini = (hx + 10, hy + 380, hz + 40)
+                mano_der["centro"] = tuple(a + (b - a) * sube for a, b in zip(ini, mano_der["centro"]))
+        cara_m = "mueca" if 0.3 < lt < 2.1 else "sonrisa"
+        pm, _ = self.persona(t, mama(26), {"cara": cara_m, "giro_cuerpo": -0.15, "mano_izq": mano_izq, "mano_der": mano_der}, MAMA)
+        return self.componer(t, "noche", pm + pb + cep + self.encimera_objetos(t))
 
-    # 4 · El niño (4) solo: moja el cepillo seco, mira a la puerta y lo devuelve al vaso
+    # 4 · El niño (4) solo: abre el agua, moja el cepillo seco, mira a la puerta, lo devuelve y cierra
     def escena_4(self, t, e):
         lt = t - e["inicio"]
-        vx, vy = VASO
-        objetivo = kf(lt, [(0.0, (vx + 30, vy - 40, 80)), (0.6, (GRIFO[0] + 50, GRIFO[1] - 70, 150)), (1.8, (GRIFO[0] + 50, GRIFO[1] - 70, 150)), (2.4, (800, 1360, 110)), (3.2, (vx + 30, vy - 30, 80)), (4.0, (vx + 30, vy - 30, 80))])
-        giro = kf(lt, [(0.0, 0.0), (1.9, 0.0), (2.2, 0.9), (2.9, 0.9), (3.2, 0.0)])
-        pb, ib = self._nino(t, 4, {"cara": "neutral", "giro": giro, "mano_der": objetivo}, self.POS_NINO)
-        en_mano = lt < 3.25
-        m = self.mano(ib)
-        prims = pb + (cepillo(m, (m[0] - 10, m[1] - 130, m[2] + 10), (90, 140, 230)) if en_mano else [])
-        return self.componer(t, "noche", prims, cepillo_vaso=not en_mano, agua=1.0 if 0.5 < lt < 1.9 else 0.0)
+        pos = NINO4
+        palanca = kf(lt, [(0.0, 0.0), (0.3, 0.0), (0.52, 1.0), (3.25, 1.0), (3.47, 0.0)])
+        self.palanca = palanca
+        agua = limitar((palanca - 0.4) / 0.4)
+        mira_puerta = suave(progreso(lt, 1.75, 2.05)) * (1 - suave(progreso(lt, 2.45, 2.75)))
+        incl = 0.32 * suave(progreso(lt, 0.85, 1.2)) * (1 - suave(progreso(lt, 2.05, 2.4)))
+        al_vaso = suave(progreso(lt, 0.45, 0.62)) * (1 - suave(progreso(lt, 0.75, 0.95))) + suave(progreso(lt, 2.6, 2.85)) * (1 - suave(progreso(lt, 3.0, 3.2)))
+        pose = {"cara": "neutral", "inclinacion": incl + 0.2 * al_vaso, "giro_cuerpo": -0.35 * al_vaso}
+        if mira_puerta > 0:
+            pose["mirar"] = tuple(np.array(curva(mira_puerta, [(0, (S.CAM.cx, S.CAM.cy, S.CAM.D)), (1, (PUERTA_XZ[0], YM, PUERTA_XZ[1]))])))
+        cab_vaso, e_vaso, _ = U.pose_en_vaso(U.VASO, 1)
+        sx_, sy_, sz_ = S.SALIDA_AGUA
+        bajo_chorro = np.array([sx_ + 6, sy_ + 50, sz_ - 4], np.float32)
+        e_chorro = N((-0.3, -0.18, -0.92))
+        en_mano = 0.62 < lt < 3.0
+        prims_cep = []
+        if en_mano:
+            arriba_vaso = cab_vaso + np.array([-12, -70, -10], np.float32)
+            cab = np.array(curva(lt, [(0.62, tuple(cab_vaso)), (0.8, tuple(arriba_vaso)), (1.12, tuple(bajo_chorro + np.array([30, -50, -60], np.float32))), (1.32, tuple(bajo_chorro)), (2.05, tuple(bajo_chorro)),
+                                      (2.35, tuple(bajo_chorro + np.array([40, -60, -70], np.float32))), (2.8, tuple(arriba_vaso)), (3.0, tuple(cab_vaso))]), np.float32)
+            k_e = suave(progreso(lt, 0.7, 1.3)) * (1 - suave(progreso(lt, 2.1, 2.9)))
+            eje = N(e_vaso * (1 - k_e) + e_chorro * k_e)
+            moja = suave(progreso(lt, 1.32, 1.45)) * (1 - suave(progreso(lt, 1.9, 2.05)))
+            cab = cab + np.array([3.0 * math.sin(lt * 2 * math.pi * 3.0) * moja, 0, 0], np.float32)
+            prims_cep, agarre = U.cepillo(cab, eje, (0, -0.3, 1), U.AZUL, agarre=62.0)
+            mano_der = {"agarre": tuple(agarre), "eje": tuple(-eje)}
+        else:
+            p0 = S.punta_palanca(0.0) + np.array([0, -12, 6], np.float32)
+            p1 = S.punta_palanca(1.0) + np.array([0, -12, 6], np.float32)
+            if lt <= 0.62:  # sube el mando del agua con los dedos y va al vaso
+                dedo = np.array(curva(lt, [(0.0, (690, 1300, 40)), (0.3, tuple(p0)), (0.52, tuple(p1)), (0.62, tuple(p1 + np.array([20, -40, 0], np.float32)))]), np.float32)
+            else:  # baja el mando y la mano vuelve a la encimera
+                dedo = np.array(curva(lt, [(3.0, tuple(cab_vaso + np.array([-30, 50, -30], np.float32))), (3.25, tuple(p1)), (3.47, tuple(p0)), (4.0, (690, 1300, 40))]), np.float32)
+            mano_der = {"palma": tuple(dedo), "dir": (0.15, 0.55, 0.8), "nrm": (0, 1, 0.2), "forma": "abierta"}
+        pose["mano_der"] = mano_der
+        pose["mano_izq"] = self.mano_en_encimera(pos[0] - 70, "izq", 62)
+        pose["polo_der"] = (1.0, 0.4, -0.4)
+        pb, _ = self.persona(t, hijo(4), pose, pos, desfase=1.7)
+        prims = pb + prims_cep + self.encimera_objetos(t, ("amarillo", None if en_mano else "azul"))
+        return self.componer(t, "noche", prims, agua=agua, sombras=[(pos[0] - 70, 70, 40, 22, 0.45)])
 
-    # 5 · Mamá entra, toca las cerdas, lo mira por el espejo, sonríe y se los cepilla otra vez
+    def handover(self, lt, t0, t1, cab, eje, ag_der=55.0, ag_izq=112.0):
+        """Pasa el cepillo de la mano derecha a la izquierda: la izquierda agarra más abajo y la derecha suelta."""
+        cep, agarre_d = U.cepillo(cab, eje, (-0.2, -0.2, 1), U.AZUL, agarre=ag_der)
+        agarre_i = np.asarray(cab, np.float32) + N(eje) * ag_izq
+        k = progreso(lt, t0, t1)
+        izq = {"agarre": tuple(agarre_i), "eje": tuple(-N(eje)), "polo": (-0.6, 0.8, -0.2)} if k > 0.35 else None
+        der = {"agarre": tuple(agarre_d), "eje": tuple(-N(eje))} if k < 0.7 else {"palma": tuple(np.asarray(agarre_d) + np.array([60, 90, -40], np.float32) * suave(progreso(lt, t0 + 0.7 * (t1 - t0), t1 + 0.2))), "dir": (-0.3, 0.6, 0.7), "nrm": (-0.8, 0.2, -0.3), "forma": "abierta"}
+        return cep, izq, der
+
+    # 5 · Mamá entra, toca las cerdas secas, lo mira por el espejo, sonríe y se los cepilla otra vez
     def escena_5(self, t, e):
         lt = t - e["inicio"]
-        pb, ib = self._nino(t, 4, {"cara": "neutral" if lt < 2.0 else ("abierta" if lt > 2.7 else "sonrisa"), "giro": 0.5 if lt < 1.4 else 0.0}, self.POS_NINO)
-        if lt < 1.3:  # entra caminando desde la puerta
-            pm, _ = self._mama_puerta(t, 26, {"cara": "neutral", "piernas": "caminando", "paso": lt * 9, "giro": -0.4}, suave(progreso(lt, 0.0, 1.3)))
-            return self.componer(t, "noche", pb + pm)
-        vx, vy = VASO
-        b = self.boca(ib)
-        if lt < 2.7:
-            objetivo = kf(lt, [(1.3, (vx - 40, vy - 60, 60)), (1.7, (vx + 30, vy - 130, 60)), (2.2, (b[0] - 80, b[1] + 60, b[2] + 40)), (2.7, (b[0] - 46, b[1] + 8, b[2] + 34))])
-            punta = None
-        else:
-            objetivo, punta = self.objetivo_cepillar(t, ib)
-        giro = kf(lt, [(1.3, 0.3), (1.8, 0.0), (2.1, 0.0), (2.4, 0.35)])
-        pm, im = self._mama(t, 26, {"cara": "neutral" if lt < 1.8 else "sonrisa", "giro": giro, "mano_der": objetivo})
-        m = self.mano(im)
+        pos_n = NINO4
+        cara_n = "neutral" if lt < 2.55 else ("sonrisa" if lt < 3.15 else "abierta")
+        ib = self.info(t, hijo(4), {"cara": cara_n}, pos_n, desfase=1.7)
+        cab_v, e_v, _ = U.pose_en_vaso(U.VASO, 1)
+        en_vaso = lt < 1.7
         cep = []
-        if lt > 1.75:
-            cep = cepillo(m, punta or (m[0] + 28, m[1] - 70, m[2] + 10), (90, 140, 230), pasta=lt > 2.1)
-        return self.componer(t, "noche", pm + pb + cep, cepillo_vaso=lt < 1.75)
+        if lt < 1.25:  # entra caminando desde la puerta
+            pm, _ = self.mama_caminando(t, 26, 0.0, 1.25, PUERTA_XZ, (MAMA[0], MAMA[2]), {"cara": "neutral", "mirar": tuple(ib["cabeza"])}, giro_cuerpo=-0.2)
+        else:
+            delante = np.array([735, 1005, 150], np.float32)  # cepillo delante del pecho, cabeza arriba
+            e_del = N((0.08, 1.0, -0.12))
+            mano_der, mano_izq = None, None
+            if lt < 1.7:  # va al vaso
+                agarre_v = cab_v + e_v * 55
+                mano_der = {"centro": tuple(curva(lt, [(1.25, (890, 1250, 30)), (1.62, tuple(agarre_v))])), "forma": "relajada"} if lt < 1.55 else {"agarre": tuple(agarre_v), "eje": tuple(-e_v)}
+            elif lt < 2.85:  # lo saca, lo pone delante y toca las cerdas con el pulgar
+                k = suave(progreso(lt, 1.7, 2.05))
+                cab = np.array(curva(lt, [(1.7, tuple(cab_v)), (1.84, tuple(cab_v + np.array([0, -75, -10], np.float32))), (2.05, tuple(delante))]), np.float32) if lt < 2.05 else delante
+                eje = N(e_v * (1 - k) + e_del * k)
+                cep, agarre = U.cepillo(cab, eje, (-0.2, -0.2, 1), U.AZUL, agarre=55.0)
+                mano_der = {"agarre": tuple(agarre), "eje": tuple(-eje)}
+                toca = suave(progreso(lt, 2.05, 2.25)) * (1 - suave(progreso(lt, 2.45, 2.65)))
+                if toca > 0.01:
+                    p_cerdas = cab + np.array([-2, -4 + 3 * math.sin(lt * 26), 12], np.float32)
+                    mano_izq = {"pinza": tuple(p_cerdas + np.array([-90, 80, 30], np.float32) * (1 - toca)), "dir": (0.6, -0.55, 0.5), "nrm": (0.2, 0.2, -1.0)}
+            elif lt < 3.1:  # se lo pasa a la mano izquierda
+                cep, mano_izq, mano_der = self.handover(lt, 2.85, 3.1, delante, e_del)
+            else:  # se los cepilla
+                lleva = suave(progreso(lt, 3.1, 3.42))
+                if lt < 3.42:
+                    m = np.asarray(ib["boca"], np.float32)
+                    destino = m + N(np.asarray(ib["cabeza"]) - m) * 7
+                    cab = delante * (1 - lleva) + destino * lleva
+                    eje = N(e_del * (1 - lleva) + N(self.EJE_MAMA) * lleva)
+                    cep, agarre = U.cepillo(cab, eje, (-0.2, -0.2, 1), U.AZUL, agarre=112.0)
+                    mano_izq = {"agarre": tuple(agarre), "eje": tuple(-eje), "polo": (-0.6, 0.8, -0.2)}
+                else:
+                    cep, mano_izq = self.cepillo_en_boca(t, ib, self.EJE_MAMA, U.AZUL, amp=7.0, f=2.7)
+                mano_der = self.mano_en_encimera(MAMA[0] + 150, "der", 60) if lt > 3.35 else None
+            mira = None if 2.4 < lt < 2.95 else tuple(ib["cabeza"])
+            cara_m = "neutral" if lt < 2.5 else "sonrisa"
+            pm, _ = self.persona(t, mama(26), {"cara": cara_m, "giro_cuerpo": -0.1 if lt < 3.0 else -0.2, "mano_der": mano_der, "mano_izq": mano_izq, "mirar": mira}, MAMA)
+        pb, _ = self.persona(t, hijo(4), {"cara": cara_n, "mano_izq": self.mano_en_encimera(pos_n[0] - 70, "izq", 62)}, pos_n, desfase=1.7)
+        prims = pm + pb + cep + self.encimera_objetos(t, ("amarillo", "azul" if en_vaso else None))
+        return self.componer(t, "noche", prims, sombras=[(pos_n[0] - 70, 70, 40, 22, 0.45)])
 
-    # 6 · De regreso del dentista: estampa «paciente valiente», enseña los dientes; mamá mete la tarjeta en el marco
+    # 6 · De regreso del dentista: estampa «paciente valiente», sonríe con los dientes; mamá mete la tarjeta en el marco
     def escena_6(self, t, e):
         lt = t - e["inicio"]
-        pb, _ = self._nino(t, 5, {"cara": "dientes", "mano_izq": (650, 1200, 90), "mano_der": (840, 1200, 90)}, self.POS_NINO, pegatina=True)
-        objetivo = kf(lt, [(0.0, (560, 1330, 0)), (1.6, (560, 1330, 0)), (2.3, (MARCO[0], MARCO[1] + 70, 330)), (2.9, (MARCO[0] + 10, MARCO[1] + 40, 340)), (3.5, (560, 1330, 0))])
-        pm, im = self._mama(t, 26, {"cara": "sonrisa", "giro": kf(lt, [(1.5, 0.3), (2.2, 0.75), (3.2, 0.3)]), "mano_der": objetivo})
-        prims = pm + pb + (tarjeta3d(self.mano(im)) if 1.6 < lt < 2.75 else [])
-        return self.componer(t, "manana", prims, tarjetas=[self._tarjeta_hijo(progreso(lt, 2.6, 2.9))])
+        pos_n = (NINO4[0], y_cabeza("nino4", 215, 1.03), NINO4[2])
+        ib = self.info(t, hijo(5, True), {"cara": "dientes"}, pos_n, escala=1.03, desfase=1.7)
+        manos_n = {"mano_izq": self.mano_en_encimera(pos_n[0] - 72, "izq", 64), "mano_der": self.mano_en_encimera(pos_n[0] + 72, "der", 64)}
+        pb, _ = self.persona(t, hijo(5, True), dict(manos_n, cara="dientes"), pos_n, escala=1.03, desfase=1.7)
+        pinza_ini = (MAMA[0] - 95, MAMA[1] + 345 + 3 * math.sin(lt * 2), MAMA[2] + 105)
+        via = (MAMA[0] - 120, MAMA[1] - 10, MAMA[2] + 210)  # sube entre las dos cabezas
+        reposo = (MAMA[0] - 95, MAMA[1] + 420, MAMA[2] + 60)
+        prims_t, mano, incl, marco, f_sombra = self.meter_en_marco(lt, "hijo", 0, 1.3, 2.35, 2.62, pinza_ini, via=via, reposo=reposo, polo=(0.45, 0.8, 0.4), inclinacion=0.6)
+        if lt > 3.47:  # luego apoya la mano en el hombro del niño
+            k = suave(progreso(lt, 3.47, 3.8))
+            hombro = self.mano_en_hombro(ib, "der")
+            mano = dict(hombro, palma=tuple(np.asarray(reposo, np.float32) * (1 - k) + np.asarray(hombro["palma"], np.float32) * k))
+        mira = tuple(ib["cabeza"]) if lt < 1.25 or lt > 3.2 else None
+        puntillas = 46.0 * incl / 0.6  # se pone de puntillas para llegar arriba del espejo
+        pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "inclinacion": incl, "mano_izq": mano, "mano_der": self.mano_en_encimera(MAMA[0] + 150, "der", 60), "mirar": mira}, (MAMA[0], MAMA[1] - puntillas, MAMA[2]))
+        prims = pm + pb + (prims_t or []) + self.encimera_objetos(t)
+        sombras = [(pos_n[0] - 72, 72, 40, 22, 0.4), (pos_n[0] + 72, 72, 40, 22, 0.4), (MAMA[0] + 150, 60, 40, 22, 0.4)]
+        return self.componer(t, "manana", prims, marco=marco or (), marco_sombra=f_sombra, sombras=sombras)
 
-    # 7 · Se le cae el primer diente: mamá lo envuelve en papel y lo guarda en la cajita de lata
+    # 7 · Se le cae el primer diente: lo deja en un pañuelito en la mano de mamá; ella lo envuelve y lo guarda en la cajita
     def escena_7(self, t, e):
         lt = t - e["inicio"]
-        obj_n = kf(lt, [(0.0, (720, 1180, 160)), (1.4, (720, 1180, 160)), (1.9, (680, 1230, 140))])
-        pb, ib = self._nino(t, 6, {"cara": "dientes", "hueco": True, "mano_izq": obj_n}, self.POS_NINO)
-        obj_m = kf(lt, [(0.0, (560, 1340, 0)), (1.2, (560, 1340, 0)), (1.8, (670, 1220, 170)), (2.5, (360, 1450, 160)), (4.0, (360, 1450, 160))])
-        pm, im = self._mama(t, 26, {"cara": "sonrisa", "giro": 0.35, "cabeceo": 0.3, "mano_der": obj_m})
-        prims = pm + pb
-        if lt < 1.85:
-            prims += diente_pequeno(self.mano(ib, "izq"))
-        elif lt < 2.6:
-            m = self.mano(im)
-            prims += [J.Elipsoide((m[0], m[1] - 20, m[2] + 20), (18, 15, 13), (250, 248, 240))]
+        pos_n = (NINO4[0], y_cabeza("nino4", 215, 1.06), NINO4[2])
+        ib = self.info(t, hijo(6), {"cara": "dientes"}, pos_n, escala=1.06, desfase=1.7)
+        hx, hy, hz = ib["cabeza"]
+        R = ib["R"]
+        pinza_n = np.array([hx + 0.95 * R, hy + 1.35 * R, hz + 1.1 * R], np.float32)
+        palma_m = pinza_n + np.array([8, 46, 4], np.float32)
+        lata_c = np.array([680.0, S.ENCIMERA_Y - U.LATA_H[1], 100.0], np.float32)
+        tapa = 1.0 - suave(progreso(lt, 2.72, 3.02))
+        prims_lata, borde_tapa = U.lata(tapa, centro=lata_c, llena=False)
+        prims = list(prims_lata)
+        reposo_n = self.mano_en_encimera(pos_n[0] + 72, "der", 64)
+        if lt < 1.45:
+            mano_n = {"pinza": tuple(pinza_n + np.array([0, 3 * math.sin(lt * 3), 0], np.float32)), "dir": (0.35, -0.75, 0.5), "nrm": (-0.6, 0.1, 0.8)}
+        else:
+            baja = suave(progreso(lt, 1.6, 2.2))
+            destino = np.array(reposo_n["palma"], np.float32)
+            mano_n = {"pinza": tuple(pinza_n * (1 - baja) + destino * baja), "dir": (0.35, -0.75, 0.5), "nrm": (-0.6, 0.1, 0.8)} if baja < 0.98 else reposo_n
+        cae = suave(progreso(lt, 1.45, 1.58))
+        if lt < 1.8:
+            prims += U.diente(pinza_n * (1 - cae) + (palma_m + np.array([0, -10, 0], np.float32)) * cae)
+        pb, _ = self.persona(t, hijo(6), {"cara": "dientes", "hueco": True, "mano_der": mano_n, "mano_izq": self.mano_en_encimera(pos_n[0] - 72, "izq", 64), "cabeceo": 0.12 if 0.8 < lt < 1.8 else 0.0, "giro": 0.25 if 0.8 < lt < 1.8 else 0.0}, pos_n, escala=1.06, desfase=1.7)
+        llega = np.array(curva(lt, [(0.6, (MAMA[0] - 120, S.ENCIMERA_Y - 20, 70)), (1.25, tuple(palma_m))]), np.float32)
+        boca_lata = lata_c + np.array([0, -U.LATA_H[1] - 40, 0], np.float32)
+        if lt < 1.65:
+            palma = llega if lt < 1.25 else palma_m
+            mano_m = {"palma": tuple(palma), "dir": (-0.9, 0.0, 0.45), "nrm": (0.0, -1.0, 0.0), "forma": "abierta"}
+            prims += U.papelito(np.asarray(palma) + np.array([0, -14, 0], np.float32), 0.0, J.rot_y(-0.3))
+        elif lt < 2.62:
+            k_bola = suave(progreso(lt, 1.65, 2.0))
+            p = np.array(curva(lt, [(1.65, tuple(palma_m)), (2.05, tuple(palma_m + np.array([30, 10, 0], np.float32))), (2.5, tuple(boca_lata))]), np.float32)
+            mano_m = {"pinza": tuple(p), "dir": (-0.6, 0.5, 0.6), "nrm": (-0.1, 0.4, -0.9)}
+            prims += U.papelito(p + np.array([0, 4, 0], np.float32), k_bola, J.rot_y(-0.3))
+        else:
+            if lt < 2.75:  # la bolita cae dentro
+                k = progreso(lt, 2.62, 2.72)
+                prims += U.papelito(boca_lata + np.array([0, 40 * k * k, 0], np.float32), 1.0)
+            if lt < 3.05:
+                yemas = np.asarray(borde_tapa, np.float32)
+                mano_m = {"palma": tuple(yemas + np.array([0, -6, -30], np.float32)), "dir": (0.0, 0.35, 1.0), "nrm": (0, 1, -0.2), "forma": "abierta"}
+            else:  # la mano descansa sobre la tapa y da dos palmaditas
+                pal = 6 * pulso(lt, [3.3, 3.62], 0.07)
+                mano_m = {"palma": tuple(lata_c + np.array([0, -U.LATA_H[1] - 10 - pal, 0], np.float32)), "dir": (-0.15, 0.2, 1.0), "nrm": (0, 1, 0), "forma": "abierta"}
+        pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "giro_cuerpo": -0.15, "mano_izq": mano_m, "mirar": tuple(pinza_n) if lt < 1.7 else tuple(lata_c)}, MAMA)
+        prims += pm + pb + self.encimera_objetos(t)
+        sombras = [(680, 100, 80, 52, 0.6), (pos_n[0] - 72, 72, 40, 22, 0.35), (pos_n[0] + 72, 72, 40, 22, 0.35 if lt > 2.2 else 0.0)]
+        return self.componer(t, "manana", prims, marco=tarjeta_en_ranura("hijo", 0), sombras=sombras)
 
-        def mesa(img):
-            pegar(img, sprite_lata(abierta=lt < 3.0), 330, 1590)
-
-        return self.componer(t, "manana", prims, extras=mesa, tarjetas=[self._tarjeta_hijo()])
-
-    # 8 · De noche, mamá sola saca monedas y escribe una notita del Ratón de los Dientes (acercamiento lento)
+    # 8 · De noche, mamá sola deja unas monedas y escribe la nota del Ratón de los Dientes (acercamiento lento)
     def escena_8(self, t, e):
         lt = t - e["inicio"]
-        escribe = cepillado((590, 1530, 150), t, amplitud=10, frecuencia=2.5) if lt > 1.5 else (560, 1520, 150)
-        pm, im = self._mama(t, 26, {"cara": "sonrisa", "cabeceo": 0.9, "mano_der": escribe, "mano_izq": (440, 1530, 140)}, (540, 790, -170))
-        m = self.mano(im)
-        prims = pm + [J.Capsula((m[0], m[1] - 4, m[2] + 6), (m[0] + 34, m[1] - 70, m[2] + 14), 6, (230, 190, 70), brillo=0.4)]
+        nota_c = np.array([588.0, S.ENCIMERA_Y - 0.9, 102.0], np.float32)
+        ancho, fondo = 132.0, 88.0
+        largos = _metricas_nota()
+        f1 = largos[0] / sum(largos)
+        if lt < 1.45:
+            k_txt, viaje = 0.0, 0.0
+        elif lt < 2.55:
+            k_txt, viaje = f1 * progreso(lt, 1.45, 2.55), 0.0
+        elif lt < 2.75:
+            k_txt, viaje = f1, progreso(lt, 2.55, 2.75)
+        else:
+            k_txt, viaje = f1 + (1 - f1) * progreso(lt, 2.75, 3.7), 0.0
+        tex = tex_nota(round(k_txt * 60) / 60)
+        prims = U.nota_en_encimera(nota_c, ancho, fondo, tex)
 
-        def mesa(img):
-            pegar(img, sprite_nota(), 610, 1620, alfa=progreso(lt, 0.8, 1.2))
-            for k, (mx, my) in enumerate(((380, 1600), (425, 1625), (400, 1572))):
-                pegar(img, disco_suave(24, (232, 190, 80), 0.8, 255), mx, my, alfa=progreso(lt, 0.3 + k * 0.2, 0.5 + k * 0.2))
+        def en_nota(u, v, alto=0.0):
+            return nota_c + np.array([(u - 0.5) * ancho, -1.0 - alto, (v - 0.5) * fondo], np.float32)
 
-        return self.componer(t, "noche", prims, encima=mesa, tarjetas=[self._tarjeta_hijo()])
+        if viaje > 0:
+            u0, v0 = NOTA_LINEAS[0][1] + largos[0], NOTA_LINEAS[0][2]
+            u1, v1 = NOTA_LINEAS[1][1], NOTA_LINEAS[1][2]
+            punta = en_nota(u0 + (u1 - u0) * suave(viaje), v0 + (v1 - v0) * suave(viaje), 14 * math.sin(math.pi * viaje))
+        elif 1.45 <= lt < 3.7:
+            u, v = punta_nota(k_txt, t)
+            punta = en_nota(u, v, 1.5 * max(0.0, math.sin(lt * 2 * math.pi * 3.2)) ** 6)
+        elif lt < 1.45:
+            ini = en_nota(NOTA_LINEAS[0][1], NOTA_LINEAS[0][2], 0)
+            punta = np.array(curva(lt, [(0.0, tuple(ini + np.array([90, -70, 30], np.float32))), (1.0, tuple(ini + np.array([60, -45, 15], np.float32))), (1.45, tuple(ini))]), np.float32)
+        else:
+            fin = en_nota(*punta_nota(1.0, 3.7))
+            punta = fin + np.array([18, -40, 10], np.float32) * suave(progreso(lt, 3.7, 4.0))
+        eje_l = N((0.42, -0.78, -0.45))
+        prims += U.lapiz(punta, eje_l)
+        mano_der = {"pinza": tuple(punta + eje_l * 34), "dir": (-0.15, 0.55, 0.82), "nrm": (-0.75, 0.1, -0.2), "polo": (0.35, 0.6, -0.8)}
+        sitio = np.array([455.0, S.ENCIMERA_Y, 100.0], np.float32)
+        p_mon = np.array(curva(lt, [(0.0, (420, 1090, 120)), (0.5, tuple(sitio + np.array([0, -16, 0], np.float32)))]), np.float32)
+        if lt < 0.55:
+            mano_izq = {"pinza": tuple(p_mon), "dir": (0.2, 0.75, 0.6), "nrm": (0.6, 0.3, -0.6), "polo": (-0.35, 0.6, -0.8)}
+            for k in range(3):
+                prims += U.moneda(p_mon + np.array([0, k * 3.6 - 4, 0], np.float32))
+        else:
+            for k, (dx_, dz_) in enumerate(((0, 0), (14, 9), (-9, 13))):
+                prims += U.moneda(sitio + np.array([dx_, -2 - 3.6 * (k == 0), dz_], np.float32))
+            sujeta = en_nota(0.03, 0.62, 0) + np.array([-22, -10, 0], np.float32)
+            p = np.array(curva(lt, [(0.55, tuple(sitio + np.array([0, -30, 0], np.float32))), (1.05, tuple(sujeta))]), np.float32)
+            mano_izq = {"palma": tuple(p), "dir": (0.45, 0.3, 0.85), "nrm": (0, 1, 0), "forma": "abierta", "polo": (-0.35, 0.6, -0.8)}
+        cara = "concentrada" if lt < 3.75 else "sonrisa"
+        pm, _ = self.persona(t, mama(26), {"cara": cara, "mirar": tuple(punta), "inclinacion": 0.22, "mano_der": mano_der, "mano_izq": mano_izq}, MAMA_SOLA)
+        prims += pm + self.encimera_objetos(t)
+        sombras = [(588, 102, 70, 46, 0.25), (455, 104, 26, 18, 0.4 if lt > 0.5 else 0.0)]
+        return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("hijo", 0), sombras=sombras)
 
-    def _nino_cepillandose(self, t, edad, pos, cara="abierta", extra=None):
-        """El niño se cepilla solo (mano derecha)."""
-        _, ib = self._nino(t, edad, {}, pos)
-        b = self.boca(ib)
-        objetivo = cepillado((b[0] + 46, b[1] + 8, b[2] + 34), t)
-        pose = {"cara": cara, "mano_der": objetivo}
-        pose.update(extra or {})
-        pb, ib = self._nino(t, edad, pose, pos)
-        return pb + cepillo(self.mano(ib), (b[0] + 4, b[1] - 2, b[2] + 10), (90, 140, 230)), ib
+    def nino_cepillandose(self, t, edad, pos, lado="der", cara="abierta", amp=9.0, f=2.6, agarre=70.0, extra=None, escala=1.0):
+        """El niño se cepilla solo (por defecto con la mano derecha, mango hacia la derecha)."""
+        quien = hijo(edad)
+        base = {"cara": cara}
+        base.update(extra or {})
+        ib = self.info(t, quien, base, pos, escala=escala, desfase=1.7)
+        sx = -1 if lado == "izq" else 1
+        e = N((sx * 0.84, 0.3, 0.48))
+        hx, hy, hz = ib["cabeza"]
+        m = np.asarray(ib["boca"], np.float32)
+        hacia = N(np.array([hx, hy, hz], np.float32) - m)
+        horiz = N((e[0], 0.0, e[2] * 0.4))
+        v = math.sin(2 * math.pi * f * t)
+        cab = m + hacia * 7 + horiz * amp * v + np.array([0, 2.2 * math.sin(4 * math.pi * f * t), 0], np.float32)
+        cep, agarre_p = U.cepillo(cab, e, hacia, U.AZUL, agarre=agarre)
+        pose = dict(base)
+        pose[f"mano_{lado}"] = {"agarre": tuple(agarre_p), "eje": tuple(-e), "polo": (sx * 0.55, 1.0, 0.3)}
+        pose.setdefault(f"mano_{'izq' if lado == 'der' else 'der'}", self.mano_en_encimera(pos[0] - sx * 72, "izq" if lado == "der" else "der", 62))
+        pb, ib = self.persona(t, quien, pose, pos, escala=escala, desfase=1.7)
+        return pb + cep, ib
 
-    # 9 · El niño (7) le quita el cepillo: ella lo suelta y da un paso atrás, hasta la puerta
+    # 9 · El niño (7) agarra el cepillo («yo solito»): ella lo suelta y da pasos atrás hasta la puerta
     def escena_9(self, t, e):
         lt = t - e["inicio"]
-        _, ib = self._nino(t, 7, {}, self.POS_NINO)
-        b = self.boca(ib)
-        if lt < 1.4:
-            obj_n = kf(lt, [(0.0, (880, 1330, 80)), (0.7, (b[0] - 60, b[1] + 30, b[2] + 34)), (1.4, (b[0] + 46, b[1] + 8, b[2] + 34))])
-            pb, ibn = self._nino(t, 7, {"cara": "neutral", "mano_der": obj_n}, self.POS_NINO)
-            prims = pb + cepillo(self.mano(ibn), (b[0] + 4, b[1] - 2, b[2] + 10), (90, 140, 230))
+        pos_n = NINO7
+        ib = self.info(t, hijo(7), {"cara": "abierta"}, pos_n, desfase=1.7)
+        para = suave(progreso(lt, 0.5, 0.8))
+        cep, mano_m = self.cepillo_en_boca(t, ib, self.EJE_MAMA, U.AZUL, amp=7.0 * (1 - para), f=2.7)
+        e_m = N(self.EJE_MAMA)
+        cab = np.asarray(mano_m["agarre"], np.float32) - e_m * U.AGARRE_CEPILLO
+        if lt < 1.15:
+            agarre_n = cab + e_m * 68
+            sube = suave(progreso(lt, 0.45, 0.9))
+            mano_n = None
+            if sube > 0.01:
+                lejos = agarre_n + np.array([30, 170, -40], np.float32)
+                mano_n = {"centro": tuple(lejos * (1 - sube) + agarre_n * sube), "forma": "relajada"} if sube < 0.97 else {"agarre": tuple(agarre_n), "eje": tuple(-e_m), "polo": (1.0, 0.7, -0.1)}
+            pb, _ = self.persona(t, hijo(7), {"cara": "neutral" if lt < 0.9 else "abierta", "mano_der": mano_n, "mano_izq": self.mano_en_encimera(pos_n[0] - 72, "izq", 62)}, pos_n, desfase=1.7)
+            prims = pb + cep
         else:
-            prims, _ = self._nino_cepillandose(t, 7, self.POS_NINO)
-        retro = suave(progreso(lt, 1.2, 3.4))
-        obj_m = (b[0] - 60, b[1] + 30, b[2] + 34) if lt < 0.75 else None
-        pm, _ = self._mama_puerta(t, 26, {"cara": "sonrisa", "giro": 0.3, "piernas": "caminando" if 1.2 < lt < 3.4 else "de_pie", "paso": lt * 7, "mano_der": obj_m}, 1 - retro)
-        return self.componer(t, "noche", prims + pm)
+            prims, _ = self.nino_cepillandose(t, 7, pos_n, amp=8.0 * suave(progreso(lt, 1.15, 1.6)), f=2.5, agarre=68.0)
+        if lt < 1.0:  # mamá todavía lo sostiene
+            pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "giro_cuerpo": -0.15, "mano_izq": mano_m, "mirar": tuple(ib["cabeza"])}, MAMA)
+        elif lt < 1.45:  # lo suelta: la mano se abre y se retira
+            k = suave(progreso(lt, 1.0, 1.45))
+            ag = np.asarray(mano_m["agarre"], np.float32)
+            pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "giro_cuerpo": -0.15 * (1 - k), "mano_izq": {"palma": tuple(ag + np.array([40, 60, -50], np.float32) * k), "dir": (-0.7, 0.2, 0.7), "nrm": (0, 1, -0.3), "forma": "abierta"} if k < 0.9 else None, "mirar": tuple(ib["cabeza"])}, MAMA)
+        else:
+            pm, _ = self.mama_caminando(t, 26, 1.45, 3.65, (MAMA[0], MAMA[2]), PUERTA_XZ, {"cara": "sonrisa", "mirar": tuple(ib["cabeza"])}, giro_cuerpo=-0.1)
+        return self.componer(t, "noche", prims + pm + self.encimera_objetos(t, ("amarillo", None)), marco=tarjeta_en_ranura("hijo", 0))
 
     # 10 · Mamá lo mira desde la puerta; levanta la mano para ayudarle y la baja (acercamiento lento)
     def escena_10(self, t, e):
         lt = t - e["inicio"]
-        prims, _ = self._nino_cepillandose(t, 7, self.POS_NINO)
-        x, y = self.POS_PUERTA
-        R = 74 * self.ESC_PUERTA
-        abajo = (x - R * 0.9, y + R * 4.5, self.Z_PUERTA)
-        sube = (x - R * 1.6, y + R * 1.4, self.Z_PUERTA + R)
-        mano = kf(lt, [(0.0, None), (1.0, None), (1.01, abajo), (1.6, sube), (2.4, sube), (3.0, abajo), (3.01, None)])
-        pm, _ = self._mama_puerta(t, 26, {"cara": "sonrisa" if lt < 2.4 else "neutral", "giro": -0.3, "mano_izq": mano})
-        return self.componer(t, "noche", prims + pm)
+        prims, ib = self.nino_cepillandose(t, 7, NINO7, amp=9.0 + 3 * math.sin(lt * 1.3), f=2.3, agarre=68.0)
+        x, z = PUERTA_XZ
+        sube = suave(progreso(lt, 1.0, 1.6)) * (1 - suave(progreso(lt, 2.4, 3.0)))
+        im0 = self.info(t, mama(26), {}, (x, YM, z))
+        hxs, hys, hzs = im0["hombros"]["izq"]
+        R = im0["R"]
+        abajo = np.array([hxs - 0.15 * R, hys + 4.0 * R, hzs + 0.3 * R], np.float32)
+        arriba = np.array([hxs - 1.4 * R, hys + 1.9 * R, hzs + 2.4 * R], np.float32)
+        mano = None
+        if sube > 0.01:
+            p = abajo * (1 - sube) + arriba * sube
+            mano = {"palma": tuple(p), "dir": (-0.45, 0.15, 0.9), "nrm": (0.2, 0.8, 0.4), "forma": "abierta"}
+        cara = "sonrisa" if lt < 2.5 else "neutral"
+        pm, _ = self.mama_puerta(t, 26, {"cara": cara, "mano_izq": mano, "inclinacion": 0.06 * sube, "mirar": tuple(ib["cabeza"])})
+        return self.componer(t, "noche", prims + pm + self.encimera_objetos(t, ("amarillo", None)), marco=tarjeta_en_ranura("hijo", 0))
 
     # 11 · Solo cambia el contador
     def escena_11(self, t, e):
-        prims, _ = self._nino_cepillandose(t, 7, self.POS_NINO)
-        return self.componer(t, "noche", prims)
+        prims, _ = self.nino_cepillandose(t, 7, NINO7, f=2.4, agarre=68.0)
+        return self.componer(t, "noche", prims + self.encimera_objetos(t, ("amarillo", None)), marco=tarjeta_en_ranura("hijo", 0))
 
-    # 12 · Adolescente (15) se cepilla 20 segundos con el celular en la mano; llega la notificación
+    # 12 · Adolescente (15) se cepilla con desgana mirando el celular; llega la notificación
     def escena_12(self, t, e):
-        pos = (600, 765)
-        _, ib = self._nino(t, 15, {"cabeceo": 0.5, "giro": 0.2}, pos)
-        b = self.boca(ib)
-        obj_c = cepillado((b[0] + 46, b[1] + 8, b[2] + 34), t, 9, 3.0)
-        obj_t = (450, 1230 + math.sin(t) * 3, 190)
-        pb, ib = self._nino(t, 15, {"cara": "abierta", "cabeceo": 0.5, "giro": 0.2, "mano_der": obj_c, "mano_izq": obj_t}, pos)
-        prims = pb + cepillo(self.mano(ib), (b[0] + 4, b[1] - 2, b[2] + 10), (90, 140, 230)) + telefono(self.mano(ib, "izq"))
-        return self.componer(t, "manana", prims, tarjetas=[self._tarjeta_hijo()])
+        lt = t - e["inicio"]
+        quien = hijo(15)
+        tel_c = np.array([TEEN[0] - 60, TEEN[1] + 262, 150.0], np.float32)
+        ib0 = self.info(t, quien, {}, TEEN)
+        hacia_ojos = N(np.asarray(ib0["cabeza"], np.float32) - tel_c)
+        arriba = np.array([0.0, -1.0, 0.0], np.float32)
+        rot = J.base_desde(-(arriba - hacia_ojos * float(arriba @ hacia_ojos)), -hacia_ojos)
+        tel_c = tel_c + np.array([0, 2 * math.sin(lt * 1.7), 0], np.float32)
+        lee = suave(progreso(lt, 1.7, 1.9)) * (1 - suave(progreso(lt, 2.4, 2.7)))
+        pose = {"cara": "abierta", "mirar": tuple(tel_c)}
+        ib = self.info(t, quien, pose, TEEN)
+        cep, mano_der = self.cepillo_en_boca(t, ib, (0.82, 0.32, 0.48), U.AZUL, amp=6.0 * (1 - 0.9 * lee), f=2.0)
+        mano_der["polo"] = (0.5, 1.0, 0.3)
+        pulgar = 4 * pulso(lt, [2.05, 2.25], 0.05)
+        mano_izq = {"centro": tuple(tel_c + rot @ np.array([0, 40, -14], np.float32) + np.array([0, 0, pulgar], np.float32)), "dir": tuple(rot @ np.array([0, -1, 0], np.float32)), "nrm": tuple(rot @ np.array([0, 0, -1], np.float32))}
+        pose.update({"mano_der": mano_der, "mano_izq": mano_izq})
+        pt, _ = self.persona(t, quien, pose, TEEN)
+        prims = pt + cep + U.telefono(tel_c, rot) + self.encimera_objetos(t, ("amarillo", None))
+        return self.componer(t, "manana", prims, marco=tarjeta_en_ranura("hijo", 0))
 
-    # 13 · De noche, mamá sola se toca la mejilla con dolor; tacha la fecha de su tarjeta y escribe otra
+    # 13 · De noche, mamá (45) se toca la mejilla con dolor; toma su tarjeta, tacha la fecha y escribe otra
     def escena_13(self, t, e):
         lt = t - e["inicio"]
-        x, y, z = self.POS_MAMA
-        mejilla = (x - 100, y + 30, 120)
-        marco = (MARCO[0] - 10, MARCO[1] + 170, 330)
-        if lt < 1.3:
-            pose = {"cara": "dolor", "giro": -0.2, "mano_izq": mejilla}
-        else:
-            obj = kf(lt, [(1.3, (x + 80, y + 560, 0)), (1.9, marco)])
-            if lt > 2.1:
-                obj = cepillado(marco, t, 10, 2.2)
-            pose = {"cara": "neutral", "giro": 0.6, "mano_der": obj}
-        pm, im = self._mama(t, 45, pose)
-        prims = pm
-        if lt > 1.9:
-            m = self.mano(im)
-            prims = prims + [J.Capsula((m[0], m[1] - 4, m[2] + 6), (m[0] + 30, m[1] - 64, m[2] + 14), 6, (230, 190, 70), brillo=0.4)]
-        tarjeta = sprite_tarjeta(GE.TARJETA_MAMA["titulo"], (), tuple(GE.TARJETA_MAMA["tachadas"]), GE.TARJETA_MAMA["nueva"] if lt > 2.8 else None)
-        return self.componer(t, "noche", prims, tarjetas=[self._tarjeta_hijo(), (tarjeta, 1.0, 1)])
+        quien = mama(45)
+        im0 = self.info(t, quien, {"giro": -0.15}, MAMA_SOLA)
+        hx, hy, hz = im0["cabeza"]
+        R = im0["R"]
+        datos = GE.TARJETA_MAMA
+        tach = tuple(datos["tachadas"])
+        k_tachar = progreso(lt, 2.2, 2.55)
+        k_nueva = progreso(lt, 2.7, 3.65)
+        tex = tex_tarjeta(datos["titulo"], (), tach, datos["nueva"], k_tachar=round(k_tachar * 20) / 20, k_nueva=round(k_nueva * 40) / 40)
+        spr = sprite_tarjeta(datos["titulo"], (), tach, datos["nueva"])
+        w, h = spr.width / 2, spr.height / 2
+        _, aw, ah, _ = ranura(1, w, h)
+        aw, ah = aw * 1.12, ah * 1.12
+        en_encimera = np.array([598.0, S.ENCIMERA_Y - 1.4, 98.0], np.float32)
+        en_mano = np.array([578.0, 1058.0, 150.0], np.float32)
+        sube = suave(progreso(lt, 1.5, 2.05))
+        c = np.array(curva(lt, [(1.5, tuple(en_encimera)), (1.78, tuple(en_encimera * 0.5 + en_mano * 0.5 + np.array([0, -40, 0], np.float32))), (2.05, tuple(en_mano))]), np.float32) if lt < 2.05 else en_mano
+        ang = math.radians(90) * (1 - sube) + math.radians(-38) * sube
+        Rc = J.rot_x(ang) @ J.rot_z(math.radians(-4))
+        prims = U.tarjeta(c, aw, ah, tex, Rc)
 
-    # 14 · «25 AÑOS DESPUÉS» (el baño vacío)
+        def en_tarjeta(px, py, alto=0.0):
+            return c + Rc @ np.array([(px / w - 0.5) * aw, (py / h - 0.5) * ah, 1.4 + alto], np.float32)
+
+        if lt < 1.35:
+            pega = suave(progreso(lt, 0.0, 0.3))
+            mejilla = np.array([hx - 0.76 * R, hy + 0.36 * R, hz + 0.66 * R], np.float32)
+            lejos = np.array([hx - 1.6 * R, hy + 3.0 * R, hz + 0.6 * R], np.float32)
+            mano_izq = {"palma": tuple(mejilla * pega + lejos * (1 - pega)), "dir": (0.2, -1.0, 0.15), "nrm": (0.75, 0.0, -0.65), "forma": "abierta"}
+        else:
+            borde = en_tarjeta(10, h * 0.62)
+            k = suave(progreso(lt, 1.35, 1.5))
+            p = np.array([hx - 1.3 * R, hy + 2.5 * R, hz + 0.8 * R], np.float32) * (1 - k) + borde * k if lt < 1.5 else borde
+            mano_izq = {"pinza": tuple(p), "dir": tuple(Rc @ np.array([0.85, -0.4, 0.2], np.float32)), "nrm": tuple(Rc @ np.array([0, 0, -1.0], np.float32))}
+        f_t = fuente("manuscrita", 40)
+        y_ult = 76 + 46 * (len(tach) - 1)
+        w_ult = f_t.getlength(tach[-1])
+        y_nueva = 76 + 46 * len(tach)
+        w_nueva = f_t.getlength(datos["nueva"])
+        if lt < 2.15:
+            reposo = np.array([hx + 1.5 * R, S.ENCIMERA_Y - 30, 70], np.float32)
+            punta = np.array(curva(lt, [(0.0, tuple(reposo)), (1.7, tuple(reposo + np.array([-10, -20, 20], np.float32))), (2.15, tuple(en_tarjeta(18, y_ult + 23, 6)))]), np.float32)
+        elif lt < 2.55:
+            k = progreso(lt, 2.2, 2.55)
+            punta = en_tarjeta(18 + (w_ult + 8) * k, y_ult + 26 - 6 * k)
+        elif lt < 2.7:
+            k = suave(progreso(lt, 2.55, 2.7))
+            punta = en_tarjeta(26 + w_ult - (w_ult + 4) * k, y_ult + 22 + (y_nueva - y_ult) * k, 10 * math.sin(math.pi * k))
+        elif lt < 3.65:
+            k = progreso(lt, 2.7, 3.65)
+            punta = en_tarjeta(22 + w_nueva * k, y_nueva + 20 + 7 * math.sin(lt * 2 * math.pi * 6.5))
+        else:
+            punta = en_tarjeta(22 + w_nueva, y_nueva + 18, 22 * suave(progreso(lt, 3.65, 3.95)))
+        eje_l = N((0.45, -0.75, -0.4))
+        prims += U.lapiz(punta, eje_l, color=(150, 60, 60))
+        mano_der = {"pinza": tuple(punta + eje_l * 34), "dir": (-0.2, 0.55, 0.8), "nrm": (-0.75, 0.1, -0.2), "polo": (0.35, 0.6, -0.8)}
+        cara = "dolor" if lt < 1.4 else ("concentrada" if lt < 3.7 else "neutral")
+        pm, _ = self.persona(t, quien, {"cara": cara, "giro": -0.15 if lt < 1.4 else 0.0, "mano_izq": mano_izq, "mano_der": mano_der, "mirar": None if lt < 1.4 else tuple(c), "inclinacion": 0.06}, MAMA_SOLA)
+        prims += pm + self.encimera_objetos(t, ("amarillo", None))
+        return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("hijo", 0), sombras=[(598, 98, 70, 50, 0.35 * (1 - sube))])
+
+    # 14 · «25 AÑOS DESPUÉS» (el baño vacío; la tarjeta vieja de mamá en el marco)
     def escena_14(self, t, e):
-        return self.componer(t, "manana", [], tarjetas=[(self._tarjeta_mama_vieja(), 1.0, 1)])
+        return self.componer(t, "manana", self.encimera_objetos(t, ("amarillo", "rosa")), marco=tarjeta_en_ranura("mama_vieja", 1))
 
     # 15 · Tú (32) le cepillas los dientes a tu hija (3) y cuentas con los dedos; mamá (58) mira desde la puerta
     def escena_15(self, t, e):
         lt = t - e["inicio"]
-        pn, inf = self._nieta(t, {"cara": "abierta"}, self.POS_PEQUENO)
-        objetivo, punta = self.objetivo_cepillar(t, inf)
-        dedos = 1 + int(limitar((lt - 0.5) / 0.6, 0, 4))
-        ph, ih = self._adulto(t, {"cara": "sonrisa", "giro": 0.35, "mano_der": objetivo, "mano_izq": (330, 730 + math.sin(t * 5) * 5, 80), "dedos_izq": dedos})
-        pm, _ = self._mama_puerta(t, 58, {"cara": "sonrisa", "giro": -0.3})
-        prims = ph + pn + cepillo(self.mano(ih), punta, (240, 120, 150)) + pm
-        return self.componer(t, "noche", prims, tarjetas=[(self._tarjeta_mama_vieja(), 1.0, 1)])
+        inf = self.info(t, nieta(), {"cara": "abierta"}, NIETA, desfase=0.6)
+        cep, mano_der = self.cepillo_en_boca(t, inf, (-0.86, 0.28, 0.45), U.ROSA, amp=6.5, f=2.6, pasta=0.4)
+        pn, _ = self.persona(t, nieta(), {"cara": "abierta", "mano_izq": self.mano_en_encimera(NIETA[0] - 68, "izq", 62), "mano_der": self.mano_en_encimera(NIETA[0] + 68, "der", 62)}, NIETA, desfase=0.6)
+        cuentas = [0.6, 1.2, 1.8, 2.4, 3.0]
+        ih0 = self.info(t, hijo(32), {"giro_cuerpo": 0.15}, HIJO32, desfase=2.2)
+        sube = suave(progreso(lt, 0.0, 0.4))
+        mano_izq = self.contar(ih0, "izq", escalon(lt, cuentas), [pulso(lt, [c + 0.06], 0.07) for c in cuentas])
+        cx_, cy_, cz_ = mano_izq["centro"]
+        mano_izq["centro"] = (cx_ + 0.3 * ih0["R"], cy_ + 0.25 * ih0["R"], cz_ + 0.15 * ih0["R"])  # delante del pecho, lejos del contador
+        if sube < 0.99:
+            hx, hy, hz = ih0["hombros"]["izq"]
+            ini = (hx - 10, hy + 380, hz + 40)
+            mano_izq["centro"] = tuple(a + (b - a) * sube for a, b in zip(ini, mano_izq["centro"]))
+        ph, _ = self.persona(t, hijo(32), {"cara": "sonrisa", "giro_cuerpo": 0.15, "mano_der": mano_der, "mano_izq": mano_izq}, HIJO32, desfase=2.2)
+        pm, _ = self.mama_puerta(t, 58, {"cara": "sonrisa", "mirar": tuple(inf["cabeza"])})
+        prims = ph + pn + cep + pm + self.encimera_objetos(t, ("amarillo", None))
+        return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("mama_vieja", 1), sombras=[(NIETA[0] - 68, 62, 36, 20, 0.35), (NIETA[0] + 68, 62, 36, 20, 0.35)])
+
+    def lata_en_manos(self, lt, t_sube=0.8, t_listo=1.4, t_abre=(1.45, 1.9)):
+        """Pose de la cajita que el hijo saca del cajón, abre y sostiene inclinada hacia el espejo."""
+        abajo = np.array([HIJO_SOLO[0] + 20, S.ENCIMERA_Y + 110, 60.0], np.float32)
+        arriba = np.array([HIJO_SOLO[0] + 25, 1085.0, 135.0], np.float32)
+        k = suave(progreso(lt, t_sube, t_listo))
+        c = np.array(curva(lt, [(t_sube, tuple(abajo)), ((t_sube + t_listo) / 2, tuple(abajo * 0.4 + arriba * 0.6 + np.array([0, -30, 0], np.float32))), (t_listo, tuple(arriba))]), np.float32)
+        inclina = suave(progreso(lt, t_abre[1], t_abre[1] + 0.4))
+        rot = J.rot_x(-0.72 * inclina)
+        abierta = suave(progreso(lt, *t_abre))
+        return c, rot, abierta, k
+
+    def manos_lata(self, c, rot):
+        hx_ = U.LATA_H[0]
+        izq = c + rot @ np.array([-hx_ - 4, 6, 0], np.float32)
+        der = c + rot @ np.array([hx_ + 4, 6, 0], np.float32)
+        return ({"palma": tuple(izq), "dir": tuple(rot @ np.array([0.2, 0.3, 1.0], np.float32)), "nrm": tuple(rot @ np.array([1.0, 0, 0], np.float32)), "forma": "abierta"},
+                {"palma": tuple(der), "dir": tuple(rot @ np.array([-0.2, 0.3, 1.0], np.float32)), "nrm": tuple(rot @ np.array([-1.0, 0, 0], np.float32)), "forma": "abierta"})
 
     # 16 · Abres el cajón buscando hilo dental y encuentras la cajita: tus 20 dientes de leche (acercamiento)
     def escena_16(self, t, e):
         lt = t - e["inicio"]
-        manos_y = kf(lt, [(0.0, 1600), (0.8, 1600), (1.6, 1300)])
-        ph, ih = self._adulto(t, {"cara": "sorpresa" if lt > 1.6 else "neutral", "cabeceo": kf(lt, [(0.0, 0.8), (1.6, 0.6)]), "mano_izq": (390, manos_y, 150), "mano_der": (600, manos_y, 150)})
-        pm, _ = self._mama_puerta(t, 58, {"cara": "sonrisa", "giro": -0.3})
-        centro = ((self.mano(ih, "izq")[0] + self.mano(ih)[0]) / 2, (self.mano(ih, "izq")[1] + self.mano(ih)[1]) / 2)
+        c, rot, abierta, k = self.lata_en_manos(lt)
+        prims_lata, borde_tapa = U.lata(abierta, centro=c, rot=rot)
+        prims = list(prims_lata)
+        if lt < 0.8:  # las manos buscan en el cajón (debajo de la encimera)
+            hurga = 8 * math.sin(lt * 9)
+            mano_izq = {"centro": (HIJO_SOLO[0] - 90, S.ENCIMERA_Y + 120 + hurga, 60), "forma": "relajada"}
+            mano_der = {"centro": (HIJO_SOLO[0] + 110, S.ENCIMERA_Y + 115 - hurga, 60), "forma": "relajada"}
+            prims = []
+        else:
+            mano_izq, mano_der = self.manos_lata(c, rot)
+            if 1.4 < lt < 2.0:  # abre la tapa con los dedos
+                mano_der = {"palma": tuple(np.asarray(borde_tapa, np.float32) + np.array([0, -4, -26], np.float32)), "dir": (0.0, 0.25, 1.0), "nrm": (0, 1, -0.3), "forma": "abierta"}
+        cara = "neutral" if lt < 1.95 else ("sorpresa" if lt < 3.2 else "sonrisa")
+        mira = tuple(c) if lt > 0.8 else (HIJO_SOLO[0], S.ENCIMERA_Y + 150, 80)
+        ph, _ = self.persona(t, hijo(32), {"cara": cara, "mirar": mira, "mano_izq": mano_izq, "mano_der": mano_der, "inclinacion": 0.08}, HIJO_SOLO, desfase=2.2)
+        pm, _ = self.mama_puerta(t, 58, {"cara": "neutral" if lt < 2.2 else "sonrisa", "mirar": tuple(c) if lt > 1.0 else None})
+        prims += ph + pm + self.encimera_objetos(t, ("amarillo", None))
+        return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("mama_vieja", 1))
 
-        def caja(img):
-            a = progreso(lt, 1.4, 1.9)
-            if a > 0:
-                pegar(img, sprite_lata_abierta(), centro[0], centro[1] - 70, escala=0.85, alfa=a)
-
-        return self.componer(t, "noche", ph + pm, encima=caja, tarjetas=[(self._tarjeta_mama_vieja(), 1.0, 1)])
-
-    # 17 · Mamá se ríe desde la puerta tapándose la boca; en el marco sigue su tarjeta vieja
+    # 17 · Mamá se ríe desde la puerta tapándose la boca; tú la miras por el espejo con la cajita abierta
     def escena_17(self, t, e):
         lt = t - e["inicio"]
-        x, y = self.POS_PUERTA
-        R = 74 * self.ESC_PUERTA
-        boca_m = (x - R * 0.1, y + R * 0.35, self.Z_PUERTA + R * 1.4)
-        abajo = (x - R, y + R * 4.4, self.Z_PUERTA)
-        mano = kf(lt, [(0.0, None), (0.01, abajo), (0.4, boca_m), (3.4, boca_m), (3.9, abajo), (3.91, None)])
-        pm, _ = self._mama_puerta(t, 58, {"cara": "tapada", "giro": -0.2, "mano_izq": mano})
-        ph, ih = self._adulto(t, {"cara": "sonrisa", "giro": 0.5, "mano_izq": (400, 1300, 150), "mano_der": (590, 1300, 150)})
-        centro = ((self.mano(ih, "izq")[0] + self.mano(ih)[0]) / 2, (self.mano(ih, "izq")[1] + self.mano(ih)[1]) / 2)
+        c, rot, _, _ = self.lata_en_manos(9.0)
+        prims = list(U.lata(1.0, centro=c, rot=rot)[0])
+        mano_izq, mano_der = self.manos_lata(c, rot)
+        ph, _ = self.persona(t, hijo(32), {"cara": "sonrisa", "inclinacion": 0.08, "mirar": tuple(c) if lt < 0.8 else None, "mano_izq": mano_izq, "mano_der": mano_der}, HIJO_SOLO, desfase=2.2)
+        x, z = PUERTA_XZ
+        risa = suave(progreso(lt, 0.0, 0.4)) * (1 - suave(progreso(lt, 3.4, 3.9)))
+        sacude = 3.0 * math.sin(lt * 2 * math.pi * 4.5) * risa
+        im0 = self.info(t, mama(58), {"cara": "tapada"}, (x, YM + sacude, z), desfase=0.4)
+        hx, hy, hz = im0["cabeza"]
+        R = im0["R"]
+        boca = np.array([hx, hy + 0.38 * R, hz + 0.95 * R], np.float32)
+        abajo = np.array([hx - 1.3 * R, hy + 4.4 * R, hz + 0.2 * R], np.float32)
+        mano = {"palma": tuple(abajo * (1 - risa) + boca * risa), "dir": (0.25, -0.9, 0.3), "nrm": (0.0, 0.1, -1.0), "forma": "abierta"} if risa > 0.02 else None
+        pm, _ = self.persona(t, mama(58), {"cara": "tapada" if risa > 0.3 else "risa", "mano_izq": mano, "piernas": "de_pie"}, (x, YM + sacude, z), desfase=0.4)
+        prims += ph + pm + self.encimera_objetos(t, ("amarillo", None))
+        return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("mama_vieja", 1))
 
-        def caja(img):
-            pegar(img, sprite_lata_abierta(), centro[0], centro[1] - 70, escala=0.85)
-
-        return self.componer(t, "noche", ph + pm, encima=caja, tarjetas=[(self._tarjeta_mama_vieja(), 0.85 + 0.15 * math.sin(lt * 3), 1)])
-
-    # 18 · Metes en el marco una tarjeta nueva; ella la lee y sonríe enseñando los dientes por primera vez
+    # 18 · Metes en el marco una tarjeta nueva; ella se acerca, la lee y sonríe enseñando los dientes por primera vez
     def escena_18(self, t, e):
         lt = t - e["inicio"]
-        marco = (POS_TARJETAS[2][0], POS_TARJETAS[2][1] + 90, 340)
-        obj = kf(lt, [(0.0, (560, 1330, 0)), (0.4, (560, 1330, 0)), (1.0, marco), (1.5, marco), (2.0, (560, 1330, 0))])
-        ph, ih = self._adulto(t, {"cara": "sonrisa", "giro": kf(lt, [(0.3, 0.2), (0.9, 0.75), (2.0, 0.4)]), "mano_der": obj})
-        acerca = suave(progreso(lt, 1.6, 2.8)) * 0.35
-        cara = "neutral" if lt < 2.9 else "dientes"
-        pm, _ = self._mama_puerta(t, 58, {"cara": cara, "giro": 0.5 if lt < 2.9 else 0.1, "cabeceo": -0.2 if lt < 2.9 else 0.0, "piernas": "caminando" if 1.6 < lt < 2.8 else "de_pie", "paso": lt * 7}, acerca, destino=(760, 800, -300))
-        prims = ph + pm + (tarjeta3d(self.mano(ih)) if 0.3 < lt < 1.4 else [])
-        nueva = sprite_tarjeta(GE.TARJETA_NUEVA["titulo"], tuple(GE.TARJETA_NUEVA["lineas"]), color=(255, 246, 228))
-        return self.componer(t, "noche", prims, tarjetas=[(self._tarjeta_mama_vieja(), 1.0, 1), (nueva, progreso(lt, 1.2, 1.5), 2)])
+        lata_c = np.array([300.0, S.ENCIMERA_Y - U.LATA_H[1], 112.0], np.float32)
+        prims = list(U.lata(1.0, centro=lata_c)[0])
+        pinza_ini = (HIJO_SOLO[0] + 115, HIJO_SOLO[1] + 360 + 3 * math.sin(lt * 2), HIJO_SOLO[2] + 125)
+        via = (HIJO_SOLO[0] + 185, HIJO_SOLO[1] + 60, HIJO_SOLO[2] + 200)  # sube por su derecha, sin taparse la cara
+        reposo = (HIJO_SOLO[0] + 120, HIJO_SOLO[1] + 470, HIJO_SOLO[2] + 60)
+        prims_t, mano, incl, marco_n, f_sombra = self.meter_en_marco(lt, "nueva", 2, 0.35, 1.25, 1.45, pinza_ini, via=via, reposo=reposo, inclinacion=0.62, polo=(0.6, 0.8, 0.3))
+        puntillas = 40.0 * incl / 0.62
+        ph, _ = self.persona(t, hijo(32), {"cara": "sonrisa", "inclinacion": incl, "mano_der": mano, "mano_izq": self.mano_en_encimera(HIJO_SOLO[0] - 150, "izq", 60)}, (HIJO_SOLO[0], HIJO_SOLO[1] - puntillas, HIJO_SOLO[2]), desfase=2.2)
+        cara = "neutral" if lt < 2.95 else "dientes"
+        mira_tarjeta = tuple(float(v) for v in ranura(2, *medidas_tarjeta("nueva"))[0])
+        if 1.6 <= lt < 2.95:
+            pm, _ = self.mama_caminando(t, 58, 1.6, 2.7, PUERTA_XZ, (1010.0, -470.0), {"cara": cara, "mirar": mira_tarjeta}, giro_cuerpo=-0.15)
+        else:
+            xz = PUERTA_XZ if lt < 1.6 else (1010.0, -470.0)
+            pm, _ = self.persona(t, mama(58), {"cara": cara, "piernas": "de_pie", "mirar": mira_tarjeta if lt > 1.2 else None}, (xz[0], YM, xz[1]), desfase=0.4)
+        prims += ph + pm + (prims_t or []) + self.encimera_objetos(t, ("amarillo", None))
+        marco = list(tarjeta_en_ranura("mama_vieja", 1)) + list(marco_n or [])
+        return self.componer(t, "noche", prims, marco=marco, sombras=[(300, 112, 80, 52, 0.55), (HIJO_SOLO[0] - 150, 60, 40, 22, 0.4)])
 
     # ================================================================ CIERRE
     @functools.lru_cache(maxsize=1)
@@ -1033,7 +1448,6 @@ class Renderizador:
 
     def cierre(self, t):
         img = self._fondo_cierre().copy()
-        k_texto = progreso(t, GE.CIERRE_INICIO + 0.2, GE.CIERRE_INICIO + 0.9)
         k_logo = progreso(t, GE.LOGO_INICIO, GE.LOGO_INICIO + 0.4)
         oscuro = progreso(t, GE.LOGO_INICIO - 0.2, GE.LOGO_INICIO + 0.4)
         if oscuro > 0:
@@ -1049,5 +1463,4 @@ class Renderizador:
             pegar(img, G.icono_instagram(130, color), W / 2, 930, alfa=k_logo, escala=0.9 + 0.1 * salida_cubica(k_logo))
             usuario = G.texto_espaciado(config.MARCA["usuario"].upper(), "condensada", 40, (255, 255, 255), 0.04)
             pegar(img, usuario, W / 2, 1040, alfa=k_logo)
-        del k_texto
         return img
