@@ -1,7 +1,11 @@
-# Dependencias obligatorias
+# Obligatorias
 moviepy>=2.1,<3      # escritura/lectura de video (incluye imageio-ffmpeg con un FFmpeg portátil)
 numpy>=1.24
 pillow>=10.1         # dibujo de gráficos, texto y emoji
 
-# Opcional: voz neuronal en línea (si no hay internet se usa espeak-ng o una grabación propia)
+# Voz neuronal offline (recomendada): Kokoro v1.0. Modelo: python generar_video.py --descargar-voz
+kokoro-onnx>=0.6
+onnx>=1.15           # crea la versión del modelo con tiempos exactos por palabra (sincronía de subtítulos)
+
+# Opcional: voz en línea alternativa
 edge-tts>=6.1

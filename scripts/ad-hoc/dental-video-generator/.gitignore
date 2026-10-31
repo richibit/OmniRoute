@@ -18,3 +18,6 @@ assets/**/*.png
 assets/**/*.jpg
 assets/**/*.jpeg
 __pycache__/
+assets/modelos_voz/*.onnx
+assets/modelos_voz/*.bin
+assets/modelos_voz/*.part

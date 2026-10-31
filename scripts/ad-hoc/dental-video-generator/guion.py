@@ -1,282 +1,213 @@
 """
-Guion definitivo de «24 horas sin cepillarse» (documento de producción, Fases 3 y 4).
+Guion de «24 horas sin cepillarse» adaptado a la fórmula de los explicadores
+verticales de referencia (los datos científicos son los del documento de
+producción y su anexo de verificación).
 
-Este archivo es el único que hay que tocar para cambiar textos, tiempos,
-sonidos o recursos. Reglas de las referencias de tiempo:
+Estructura de la fórmula:
+  1. Gancho dirigido a «tú» con imagen literal.
+  2. Negación que abre la intriga («no es suciedad…») + promesa.
+  3. Mecanismo paso a paso, una idea por frase, con metáforas simples.
+  4. Dato numérico grande y comparación.
+  5. Dato curioso que rompe una creencia (Svatun y Attramadal, 1978).
+  6. Giro: lo que esperas (caries) no pasa.
+  7. Prueba histórica (experimento de Löe, 1965).
+  8. Frase que reencuadra el gancho («Un día no… la costumbre, sí»).
+  9. Llamada a compartir con destinatario concreto + cierre con logo.
 
-* Un número (p. ej. ``12.5``) es un instante absoluto en segundos del video.
-* Una tupla ``("palabra", bloque)`` es el instante en que la narradora dice esa
-  palabra dentro del bloque indicado (se calcula a partir del audio real), con
-  un tercer elemento opcional de desplazamiento: ``("caries", 8, -0.1)``.
-  Así las imágenes, los textos y los sonidos quedan sincronizados con la voz
-  aunque cambies la narración o la grabes tú.
-* ``None`` en ``hasta`` significa «hasta el final del bloque».
+Este archivo es el único que hay que tocar para cambiar textos, palabras
+resaltadas, etiquetas, sonidos o el reloj. La duración NO se fija aquí: cada
+bloque dura lo que dura su narración (voz real o sintética).
+
+Referencias de tiempo dentro de un bloque:
+  * número  → segundos desde el inicio del bloque (``0.0`` = cuando empieza a hablar)
+  * ``("palabra", desplazamiento)`` → instante en que se dice esa palabra en el mismo bloque
+  * ``("palabra", bloque, desplazamiento)`` → palabra de otro bloque
 """
 
-# ---------------------------------------------------------------------------
-# Bloques narrativos = escenas. Deben ser contiguos y cubrir 0–48 s.
-# ---------------------------------------------------------------------------
 BLOQUES = [
     {
         "id": 1,
         "nombre": "Gancho",
-        "inicio": 0.0,
-        "fin": 3.0,
+        "escena": "gancho",
         "narracion": "Te acabas de cepillar… y tus dientes ya se están cubriendo otra vez.",
-        "palabras_clave": ["cubriendo"],
-        "textos": [
-            {"texto": "TE ACABAS DE CEPILLAR…", "desde": 0.0, "hasta": 1.5, "estilo": "titulo"},
-        ],
+        "resaltar": ["cubriendo"],
         "sonidos": [
-            {"nombre": "squeak", "en": 0.05},
-            {"nombre": "whoosh", "en": ("cubriendo", 1, -0.12)},
+            {"nombre": "brillo", "en": 0.15},
+            {"nombre": "whoosh", "en": ("cubriendo", -0.15)},
         ],
     },
     {
         "id": 2,
-        "nombre": "Promesa",
-        "inicio": 3.0,
-        "fin": 6.0,
-        "narracion": "Esto pasa en tu boca si no te cepillas en 24 horas.",
-        "palabras_clave": ["24", "horas"],
-        "textos": [
-            {"texto": "24 HORAS\nSIN CEPILLARTE", "desde": 3.25, "hasta": None, "estilo": "titulo"},
+        "nombre": "Negación + promesa",
+        "escena": "negacion",
+        "narracion": "Y no es suciedad: es tu propia saliva. Esto pasa si no te cepillas en 24 horas.",
+        "resaltar": ["saliva"],
+        "textos": {"etiqueta_saliva": "saliva"},
+        "sonidos": [
+            {"nombre": "burbujas", "en": ("saliva", -0.3)},
+            {"nombre": "clic", "en": ("24", 0.0)},
         ],
-        "sonidos": [{"nombre": "clic", "en": 3.0}],
     },
     {
         "id": 3,
         "nombre": "Minuto 1: la película",
-        "inicio": 6.0,
-        "fin": 10.0,
-        "narracion": "Minuto uno: la saliva pega una capa de proteínas al diente. Funciona como velcro.",
-        "palabras_clave": ["proteínas", "velcro"],
-        "textos": [
-            {"texto": "00:01 · Película salival", "desde": 6.2, "hasta": None, "estilo": "dato"},
-            {"texto": "= VELCRO", "desde": ("velcro", 3, -0.05), "hasta": None, "estilo": "badge_menta", "y": 600},
-        ],
+        "escena": "pelicula",
+        "narracion": "En un minuto, tu saliva pega una capa de proteínas al diente. Funciona como velcro.",
+        "resaltar": ["velcro"],
+        # En la tarjeta de velcro: los ganchos son las bacterias y los bucles, las proteínas de la película.
+        "textos": {"etiqueta": "película salival", "tarjeta": "VELCRO", "gancho": "bacterias", "bucle": "proteínas"},
         "sonidos": [
-            {"nombre": "burbujas", "en": 6.25},
-            {"nombre": "velcro", "en": ("velcro", 3, -0.05)},
+            {"nombre": "whoosh", "en": 0.0},
+            {"nombre": "pop", "en": ("capa", 0.0)},
+            {"nombre": "velcro", "en": ("velcro", 0.0)},
         ],
     },
     {
         "id": 4,
-        "nombre": "Hora 4: los pioneros",
-        "inicio": 10.0,
-        "fin": 15.0,
-        "narracion": "Hora cuatro: ya hay bacterias pegadas. Casi todas estreptococos… y la mayoría, inofensivas.",
-        "palabras_clave": ["bacterias", "estreptococos", "inofensivas"],
-        "textos": [
-            {"texto": "04:00 · 60–90 % estreptococos", "desde": 10.4, "hasta": None, "estilo": "dato"},
-            {
-                "texto": "Sorpresa: la mayoría son comensales",
-                "desde": ("inofensivas", 4, -0.05),
-                "hasta": None,
-                "estilo": "badge_menta",
-                "y": 640,
-            },
-        ],
+        "nombre": "Hora 4: las pioneras",
+        "escena": "pioneras",
+        "narracion": "A las cuatro horas ya hay bacterias pegadas: casi todas, estreptococos… y la mayoría, inofensivas.",
+        "resaltar": ["inofensivas"],
+        "textos": {
+            "dato": "60–90 %",
+            "dato_sub": "SON ESTREPTOCOCOS",
+            "especies": ["S. mitis", "S. oralis"],
+            "comensales": "comensales ✓",
+        },
         "sonidos": [
-            {"nombre": "ticks_rapidos", "en": 10.0},
-            {"nombre": "plop", "en": 11.35},
-            {"nombre": "plop", "en": 11.9},
-            {"nombre": "plop", "en": 12.5},
-            {"nombre": "plop", "en": 13.15},
-            {"nombre": "plop", "en": 13.8},
+            {"nombre": "plop", "en": ("bacterias", 0.2)},
+            {"nombre": "plop", "en": ("pegadas", 0.1)},
+            {"nombre": "pop", "en": ("estreptococos", 0.0)},
+            {"nombre": "pop", "en": ("inofensivas", 0.0)},
         ],
     },
     {
         "id": 5,
         "nombre": "Hora 8: colonias y ácido",
-        "inicio": 15.0,
-        "fin": 20.0,
-        "narracion": "Hora ocho: forman colonias. Y cada vez que comes azúcar, lo convierten en ácido en minutos.",
-        "palabras_clave": ["colonias", "azúcar", "ácido"],
-        "textos": [
-            {"texto": "08:00 · AZÚCAR → ÁCIDO", "desde": 15.3, "hasta": None, "estilo": "dato"},
-        ],
+        "escena": "colonias",
+        "narracion": "A las ocho forman colonias. Y cada vez que comes azúcar, lo convierten en ácido en minutos.",
+        "resaltar": ["ácido"],
+        "textos": {"umbral": "5,5 · umbral del esmalte"},
         "sonidos": [
-            {"nombre": "ticks_rapidos", "en": 15.0},
-            {"nombre": "crujido", "en": ("azúcar", 5, 0.0)},
-            {"nombre": "whoosh", "en": ("convierten", 5, -0.25)},
-            {"nombre": "efervescencia", "en": ("convierten", 5, 0.05)},
+            {"nombre": "crujido", "en": ("azúcar", 0.05)},
+            {"nombre": "efervescencia", "en": ("convierten", 0.0)},
+            {"nombre": "whoosh", "en": ("ácido", -0.25)},
         ],
     },
     {
         "id": 6,
         "nombre": "Dato clave",
-        "inicio": 20.0,
-        "fin": 25.0,
-        "narracion": "Dato clave: sin placa, el azúcar casi no baja el pH. El ácido lo fabrican ellas.",
-        "palabras_clave": ["placa", "ellas"],
-        "textos": [
-            {"texto": "Svatun y Attramadal, 1978", "desde": 20.6, "hasta": 24.8, "estilo": "fuente", "y": 1440},
-        ],
+        "escena": "dato_clave",
+        "narracion": "Y lo más curioso: sin placa, el azúcar casi no baja el pH. El ácido lo fabrican ellas.",
+        "resaltar": ["ellas"],
+        "textos": {
+            "titulo": "pH TRAS COMER AZÚCAR",
+            "fila_1": "SIN PLACA",
+            "fila_2": "CON PLACA",
+            "fuente": "Svatun y Attramadal, 1978",
+            "etiqueta_ellas": "bacterias de la placa",
+        },
         "sonidos": [
-            {"nombre": "whoosh", "en": 20.0},
-            # el riser sube y se corta en seco justo antes de «El ácido lo fabrican ellas»
-            {"nombre": "riser", "en": 21.0, "hasta": ("ácido", 6, -0.3)},
+            {"nombre": "riser", "en": ("curioso", 0.0), "hasta": ("ácido", -0.15)},
+            {"nombre": "pop", "en": ("ellas", 0.0)},
         ],
     },
     {
         "id": 7,
         "nombre": "La noche",
-        "inicio": 25.0,
-        "fin": 31.0,
-        "narracion": "De noche tu saliva casi se detiene. Las bacterias de la lengua sueltan gases de azufre. Buenos días, aliento.",
-        "palabras_clave": ["noche", "azufre", "aliento"],
-        "textos": [
-            {"texto": "16:00 · NOCHE · Saliva ≈ 0", "desde": 25.35, "hasta": ("Buenos", 7, -0.1), "estilo": "dato"},
-            {
-                "texto": "Compuestos sulfurados volátiles",
-                "desde": ("bacterias", 7, 0.0),
-                "hasta": ("Buenos", 7, -0.1),
-                "estilo": "badge_ambar",
-                "y": 600,
-            },
-            {"texto": "BUENOS DÍAS,\nALIENTO", "desde": ("Buenos", 7, 0.0), "hasta": None, "estilo": "titulo"},
-        ],
+        "escena": "noche",
+        "narracion": "De noche tu saliva casi se detiene y las bacterias de tu lengua sueltan gases de azufre. Buenos días, aliento.",
+        "resaltar": ["aliento"],
+        "textos": {"rio": "saliva ≈ 0", "gases": "compuestos sulfurados volátiles"},
         "sonidos": [
-            {"nombre": "grillos", "en": 25.2, "duracion": 4.0},
-            {"nombre": "rio", "en": 25.1, "duracion": 3.2},
-            {"nombre": "comico", "en": ("Buenos", 7, 0.0)},
+            {"nombre": "grillos", "en": 0.0, "duracion": 3.0},
+            {"nombre": "comico", "en": ("Buenos", 0.0)},
         ],
     },
     {
         "id": 8,
         "nombre": "Hora 24: la revelación",
-        "inicio": 31.0,
-        "fin": 37.0,
-        "narracion": "Hora veinticuatro: una capa pegajosa. ¿Ya tienes caries? No. ¿Gingivitis? Tampoco: tarda de 10 a 21 días.",
-        "palabras_clave": ["pegajosa", "caries", "No", "Tampoco", "21"],
-        "textos": [
-            {"texto": "24:00", "desde": 31.2, "hasta": ("caries", 8, 0.2), "estilo": "titulo"},
-            {"texto": "¿CARIES? ✗", "desde": ("No", 8, 0.0), "hasta": None, "estilo": "badge_coral", "y": 400},
-            {
-                "texto": "¿GINGIVITIS? ✗ (10–21 días)",
-                "desde": ("Tampoco", 8, 0.0),
-                "hasta": None,
-                "estilo": "badge_coral",
-                "y": 510,
-            },
-        ],
+        "escena": "revelacion",
+        "narracion": "A las 24 horas ya tienes una capa pegajosa. ¿Caries? No. ¿Gingivitis? Tampoco: tarda de 10 a 21 días.",
+        "resaltar": ["Tampoco"],
+        "textos": {"placa": "biopelícula", "caries": "CARIES", "gingivitis": "GINGIVITIS"},
         "sonidos": [
-            {"nombre": "impacto", "en": ("caries", 8, 0.0)},
-            {"nombre": "ding_error", "en": ("No", 8, 0.05)},
-            {"nombre": "ding_error", "en": ("Tampoco", 8, 0.05)},
+            {"nombre": "impacto", "en": ("Caries", 0.0)},
+            {"nombre": "ding_error", "en": ("No", 0.0)},
+            {"nombre": "ding_error", "en": ("Tampoco", 0.0)},
         ],
     },
     {
         "id": 9,
-        "nombre": "Conclusión",
-        "inicio": 37.0,
-        "fin": 43.0,
-        "narracion": "Un día no te arruina la boca. La costumbre, sí. Y todo esto se va con un buen cepillado.",
-        "palabras_clave": ["costumbre", "cepillado"],
-        "textos": [
-            {"texto": "UN DÍA NO.\nLA COSTUMBRE, SÍ.", "desde": 37.15, "hasta": 39.45, "estilo": "destacado"},
-        ],
+        "nombre": "Prueba histórica",
+        "escena": "historia",
+        "narracion": "En 1965, unos voluntarios dejaron de cepillarse a propósito. Todos tuvieron gingivitis… y con una semana de cepillado, desapareció.",
+        "resaltar": ["desapareció"],
+        "textos": {
+            "anio": "1965",
+            "anio_sub": "VOLUNTARIOS SIN CEPILLARSE",
+            "fuente": "Löe et al., 1965",
+            "gingivitis": "gingivitis",
+            "sanos": "encías sanas ✓",
+            "dias": "día",
+        },
         "sonidos": [
-            {"nombre": "cepillado", "en": ("todo", 9, 0.0)},
-            {"nombre": "brillo", "en": ("cepillado", 9, 0.35)},
-            {"nombre": "whoosh", "en": 42.55},
+            {"nombre": "clic", "en": 0.0},
+            {"nombre": "pop", "en": ("gingivitis", 0.0)},
+            {"nombre": "brillo", "en": ("desapareció", 0.0)},
         ],
     },
     {
         "id": 10,
-        "nombre": "Cierre y bucle",
-        "inicio": 43.0,
-        "fin": 48.0,
-        "narracion": "¿Qué es lo máximo que has pasado sin cepillarte? Confiesa en comentarios. Aquí no juzgamos.",
-        "palabras_clave": ["máximo", "comentarios"],
-        "textos": [
-            {"texto": "¿TU RÉCORD\nSIN CEPILLARTE? 👇", "desde": 43.35, "hasta": 47.2, "estilo": "titulo"},
-        ],
+        "nombre": "Reencuadre",
+        "escena": "costumbre",
+        "narracion": "Un día no te arruina la boca. La costumbre, sí. Y todo eso se va con un buen cepillado.",
+        "resaltar": ["costumbre"],
+        "textos": {"pasta": "pasta con flúor"},
         "sonidos": [
-            {"nombre": "pop", "en": 43.35},
-            {"nombre": "pop", "en": 44.6},
-            {"nombre": "pop", "en": 45.4},
+            {"nombre": "cepillado", "en": ("todo", 0.0)},
+            {"nombre": "brillo", "en": ("cepillado", 0.2)},
         ],
+    },
+    {
+        "id": 11,
+        "nombre": "Llamada a compartir",
+        "escena": "compartir",
+        "narracion": "Y mándaselo a quien se duerme sin cepillarse.",  # la «Y» suaviza el arranque de la voz sintética
+        "resaltar": ["cepillarse"],
+        "textos": {
+            "enviar_a": "Enviar a",
+            "contactos": ["Mi pareja", "Mamá", "Andrés", "Vale"],
+            "boton": "Enviar",
+            "enviado": "Enviado ✓",
+        },
+        "sonidos": [{"nombre": "pop", "en": ("quien", 0.1)}, {"nombre": "clic", "en": ("cepillarse", 0.1)}],
     },
 ]
 
-# Burbujas de comentarios de ejemplo de la escena 10 (texto, instante de aparición).
-COMENTARIOS_EJEMPLO = [
-    ("2 días 😬", 44.6),
-    ("nunca, lo juro", 45.4),
-]
-
-# Instante del corte final al macro del diente (bucle de repetición).
-CORTE_BUCLE = 47.25
-
 # ---------------------------------------------------------------------------
-# Textos permanentes
+# Reloj de 24 h (píldora fija bajo los subtítulos, a la izquierda).
+# (referencia, horas). El cambio de hora dura RELOJ_TRANSICION segundos (efecto time-lapse).
 # ---------------------------------------------------------------------------
-TEXTOS_GLOBALES = [
-    # Texto legal (6–37 s, esquina inferior, tamaño pequeño)
-    {"texto": "Tiempos aproximados: varían entre personas.", "desde": 6.0, "hasta": 37.0, "estilo": "legal"},
-    # Aviso de rigor en las vistas microscópicas
-    {"texto": "Ilustración esquemática · no a escala", "desde": 6.0, "hasta": 20.0, "estilo": "legal2"},
-]
-
-# ---------------------------------------------------------------------------
-# Reloj de 24 h (esquina superior derecha). Fotogramas clave: (instante, horas).
-# Entre dos claves el reloj avanza con aceleración tipo time-lapse.
-# ---------------------------------------------------------------------------
-RELOJ_APARECE = 3.0  # pop-in con rebote en la escena 2
+RELOJ_APARECE = ("24", 2, -0.05)
+RELOJ_TRANSICION = 0.6
 RELOJ_CLAVES = [
-    (0.0, 0.0),
-    (6.0, 0.0),
-    (6.35, 1 / 60),  # 00:01
-    (10.0, 1 / 60),
-    (10.75, 4.0),  # salto a 04:00
-    (15.0, 4.0),
-    (15.6, 8.0),  # 08:00
-    (25.0, 8.0),
-    (25.7, 16.0),  # 16:00 (horas transcurridas, no hora del día)
-    (31.0, 16.0),
-    (31.8, 24.0),  # completa la vuelta y brilla
-    (41.9, 24.0),
-    (42.6, 0.0),  # giro inverso rápido a 00:00
-    (48.0, 0.0),
+    (("24", 2, 0.0), 0.0),
+    (("minuto", 3, -0.1), 1 / 60),  # 00:01
+    (("cuatro", 4, -0.1), 4.0),
+    (("ocho", 5, -0.1), 8.0),
+    (("noche", 7, -0.1), 16.0),  # horas transcurridas, no hora del día
+    (("24", 8, -0.1), 24.0),
+    (("cepillado", 10, 0.0), 0.0),  # giro inverso a 00:00 cuando se cepilla
 ]
-RELOJ_NOCHE = (25.0, ("Buenos", 7, 0.0))  # fondo oscuro + luna
+RELOJ_NOCHE = (("noche", 7, -0.1), ("A", 8, -0.1))
+RELOJ_OCULTO = [(("En", 9, -0.15), ("Un", 10, -0.15))]  # durante la historia de 1965
 
-# ---------------------------------------------------------------------------
-# Música generada (105 BPM → 21 compases exactos en 48 s: bucle limpio).
-# capas: tic (pulso de reloj), bombo, bajo, pad, hats.
-# armonia: "base" (Lam–Fa–Do–Sol), "oscura" (Lam–Rem–Sib–Mi), "mayor" (Do–Fa–Sol–Do)
-# ---------------------------------------------------------------------------
+# Textos legales y de rigor (pequeños, abajo a la izquierda).
+TEXTOS_LEGALES = [
+    {"texto": "Tiempos aproximados: varían entre personas.", "desde": ("En", 3, -0.1), "hasta": ("En", 9, -0.15)},
+    {"texto": "Ilustración esquemática · no a escala", "desde": ("En", 3, -0.1), "hasta": ("Y", 6, -0.1)},
+]
+
+# Música opcional (desactivada en la fórmula): ver config.MUSICA_DE_FONDO.
 BPM = 105
-CAPAS_COMPLETAS = ["tic", "bombo", "bajo", "pad"]
-MUSICA_SECCIONES = [
-    {"inicio": 0.0, "fin": 0.5, "capas": [], "ganancia": 0.0},  # silencio inicial
-    {"inicio": 0.5, "fin": 3.0, "capas": ["tic"], "ganancia": 1.0},  # entra el pulso
-    {"inicio": 3.0, "fin": 10.0, "capas": CAPAS_COMPLETAS, "ganancia": 1.0},  # entra el bajo
-    {"inicio": 10.0, "fin": 15.0, "capas": CAPAS_COMPLETAS + ["hats"], "ganancia": 1.15},  # subida
-    {"inicio": 15.0, "fin": 20.0, "capas": CAPAS_COMPLETAS + ["hats"], "ganancia": 1.1, "armonia": "oscura"},
-    {"inicio": 20.0, "fin": 25.0, "capas": ["tic", "pad", "bajo"], "ganancia": 0.3, "armonia": "oscura"},
-    {"inicio": 25.0, "fin": 31.0, "capas": ["tic", "pad", "bajo"], "ganancia": 0.7, "noche": True},
-    {"inicio": 31.0, "fin": ("caries", 8, 0.0), "capas": CAPAS_COMPLETAS, "ganancia": 1.0},
-    {"inicio": ("caries", 8, 0.0), "fin": ("Tampoco", 8, 0.0), "capas": [], "ganancia": 0.0},  # silencio
-    {"inicio": ("Tampoco", 8, 0.0), "fin": 37.0, "capas": CAPAS_COMPLETAS, "ganancia": 1.0},
-    {"inicio": 37.0, "fin": 43.0, "capas": CAPAS_COMPLETAS, "ganancia": 1.0, "armonia": "mayor"},
-    {"inicio": 43.0, "fin": 48.0, "capas": ["tic", "pad"], "ganancia": 0.9, "armonia": "mayor"},
-]
-
-# ---------------------------------------------------------------------------
-# Recursos opcionales grabados. Si el archivo existe se usa; si no, el programa
-# dibuja una alternativa animada. Basta con copiar el archivo con ese nombre
-# (cualquier extensión de la lista) dentro de assets/imagenes o assets/videos.
-# ---------------------------------------------------------------------------
-EXTENSIONES_VIDEO = [".mp4", ".mov", ".m4v", ".webm", ".mkv"]
-EXTENSIONES_IMAGEN = [".png", ".jpg", ".jpeg", ".webp"]
-RECURSOS = {
-    "dentista_espejo": "Escena 1 (inicio): la dentista termina de cepillarse frente al espejo y sonríe.",
-    "velcro": "Escena 3: primer plano de una tira de velcro real (inserto de 0,5 s).",
-    "persona_despierta": "Escena 7 (final): persona que despierta y se tapa la boca con humor.",
-    "dentista_no": "Escena 8: la dentista a cámara en el consultorio responde «No» con calma.",
-    "dentista_cierre": "Escena 10: la dentista a cámara con sonrisa cómplice.",
-    "logo": "Escena 10: logotipo del consultorio (PNG con fondo transparente recomendado).",
-}

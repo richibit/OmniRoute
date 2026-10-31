@@ -1,114 +1,127 @@
-# 24 horas sin cepillarse — generador de video vertical
+# 24 horas sin cepillarse — generador de video vertical (fórmula de explicador viral)
 
-Programa en Python que produce, de principio a fin, el video de 48 s descrito en el documento de producción
-«24 horas sin cepillarse»: 1080×1920 (9:16), 30 FPS, H.264 + AAC, listo para TikTok, Instagram Reels y YouTube Shorts.
+Programa en Python que produce, de principio a fin, el video vertical «24 horas sin cepillarse»
+(1080×1920, 9:16, 30 FPS, H.264 + AAC), listo para TikTok, Instagram Reels y YouTube Shorts.
+Los datos y escenas salen del documento de producción (y su anexo de verificación científica); el
+estilo, el ritmo, el sonido y la estructura copian la fórmula de cuatro explicadores verticales que
+funcionaron bien.
 
-Sin recursos externos el video sale completo: todas las imágenes (dientes, película salival, estreptococos, colonias,
-cristales de azúcar, medidor de pH, lengua, dentista ilustrada, calendario, cepillo, reloj de 24 h), la música y los
-efectos de sonido se generan por código. Cuando tengas grabaciones reales (dentista, voz, logotipo, música), cópialas
-en `assets/` con el nombre indicado y sustituyen automáticamente a la versión generada.
+Sin recursos externos el video sale completo: todas las imágenes y efectos se generan por código y
+la narración se sintetiza con una voz neuronal offline (Kokoro). Se exportan dos archivos: con voz
+y sin voz (mismo video y mismos efectos, para montar después la voz de la dentista).
+
+## La fórmula (medida en los videos de referencia)
+
+| Elemento | Qué hacen los videos de referencia | Cómo lo aplica este proyecto |
+| --- | --- | --- |
+| Duración y ritmo | 55–72 s; voz continua a ≈2,8–3 palabras/s | La duración sale de la narración (≈66 s); Kokoro a ×1,1 |
+| Gancho | Primera frase dirigida a «tú» con imagen literal | «Te acabas de cepillar… y tus dientes ya se están cubriendo otra vez.» + el cepillo sale de cuadro |
+| Negación | «No es por tu cara», «no es un sueño», «no es tu imaginación» | «Y no es suciedad: es tu propia saliva.» |
+| Mecanismo | Una idea por frase, corte de plano en cada frase, cámara en movimiento | 11 bloques = 11 planos con *punch-in* en cada corte, zooms y barridos |
+| Datos | Tarjetas con número grande, barras comparativas, etiquetas con línea guía, fuente en letra pequeña | «60–90 %», barras de pH sin/con placa, «S. mitis / S. oralis», «Svatun y Attramadal, 1978» |
+| Prueba / giro | Escáner, laboratorio, anécdota histórica | ¿Caries? No. ¿Gingivitis? Tampoco + experimento de Löe (1965) |
+| Reencuadre | Frase final que replantea el gancho | «Un día no te arruina la boca. La costumbre, sí.» |
+| Llamada a la acción | «Mándaselo a quien…» con destinatario concreto | «Y mándaselo a quien se duerme sin cepillarse.» + teléfono con «Enviar a» |
+| Subtítulos | Arriba (≈18 % de la altura), palabra a palabra: la actual en blanco y negrita, las dichas en gris, una palabra clave por frase en recuadro azul de selección | Igual, sincronizados al milisegundo con la duración real de cada fonema |
+| Marca | Icono de Instagram + @usuario a la derecha bajo los subtítulos | Igual (con el @ de `config.py`) |
+| Estética | Fondo oscuro con foco de luz, partículas, viñeta, brillos | Igual, con la paleta del documento (menta, ámbar, coral) |
+| Sonido | Voz sola (sin música bajo la voz, piso entre palabras ≈ −52 dB), −14 LUFS | Igual: voz −10,5 dB p90, piso −52,6 dB, −14,5 LUFS |
+| Cierre | Última palabra → 1,2 s de silencio → golpe grave fuerte con el logo → silencio; el último subtítulo queda en pantalla | Igual, con el logo de Instagram sobre el mismo diente del inicio (bucle) |
 
 ## Viabilidad técnica (comprobada)
 
 | Requisito | Cómo se cumple |
 | --- | --- |
-| 1080×1920, 9:16, 30 FPS, MP4 H.264/AAC | Escritor FFmpeg de MoviePy (`libx264`, `yuv420p`, CRF 17) + AAC 192 kbps; el programa verifica el archivo final |
-| Duración del guion | 10 bloques contiguos de 0 a 48 s (`guion.py`), validados al arrancar |
-| Escenas, imágenes, videos, cámara, transiciones | `escenas.py`: push-in, pull-back, tilt, órbita, dolly, match cut, whip pan, barrido vertical, fundido a negro, freeze frame, wipe con el cepillo, corte de bucle |
-| Sincronía imagen–voz | Los cortes, textos y sonidos se anclan a palabras de la narración (`("cubriendo", 1)`), cuyo instante se mide en el audio real |
-| Subtítulos sincronizados y resaltados | 2–3 palabras, palabra activa en menta, palabras clave en ámbar, contorno de 4 px, al 62,5 % de la altura; además se exportan SRT y VTT |
-| Música y efectos con niveles controlados | Música a 105 BPM con pulso de reloj (21 compases = bucle limpio), 18 efectos, ducking automático bajo la voz, normalización a −14 LUFS |
-| Narración grabada o texto a voz | Grabación completa o por bloques > edge-tts (en línea) > espeak-ng/MBROLA (offline) > silencio |
-| Rigor científico | Rangos aproximados, texto legal (6–37 s), aviso «Ilustración esquemática · no a escala» en las vistas microscópicas, fuente Svatun y Attramadal (1978) en pantalla |
+| 1080×1920, 9:16, 30 FPS, MP4 H.264/AAC | Escritor FFmpeg de MoviePy (`libx264`, `yuv420p`, CRF 17) + AAC 192 kbps; el programa verifica cada archivo |
+| Combinar escenas, imágenes y videos | 11 escenas animadas; cualquier bloque se puede sustituir por un video o una foto propios (`bloque_XX`) |
+| Animaciones, cámara, transiciones | *Punch-in* en los cortes, push-in, pull-back, inclinación, órbita, zoom a través de la superficie, barrido con desenfoque, congelado con destello, fundido a negro |
+| Sincronía imagen–voz | Etiquetas, tarjetas, cortes y sonidos se anclan a palabras de la narración (`("velcro", 0.0)`) |
+| Subtítulos y palabras resaltadas | Karaoke arriba + recuadro azul en la palabra clave; también SRT y VTT |
+| Niveles de audio | Voz normalizada por bloque, efectos a −20 dB, golpe final, ganancia común a −14 LUFS con limitador |
+| Rigor científico | Rangos aproximados, «Tiempos aproximados: varían entre personas», «Ilustración esquemática · no a escala», fuentes en pantalla |
 
 ## B. Dependencias e instalación
 
-Requisitos: **Python 3.9 o superior** y **FFmpeg** (MoviePy instala uno portátil mediante `imageio-ffmpeg`, pero se
-recomienda el del sistema).
+Requisitos: **Python 3.9 o superior** y **FFmpeg** (MoviePy instala uno portátil mediante `imageio-ffmpeg`,
+pero se recomienda el del sistema).
 
 ```bash
 cd scripts/ad-hoc/dental-video-generator
 python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python generar_video.py --descargar-fuentes --previsualizar 1   # descarga fuentes y prueba un fotograma
+python generar_video.py --descargar-fuentes --descargar-voz --previsualizar 1
 ```
 
-FFmpeg del sistema (opcional pero recomendado):
+La última línea descarga las fuentes (≈2 MB) y la voz Kokoro (≈350 MB, una sola vez) y guarda un
+fotograma de prueba en `temp/previews/`.
 
-- Ubuntu/Debian: `sudo apt install ffmpeg`
-- macOS: `brew install ffmpeg`
-- Windows: `winget install ffmpeg`
+FFmpeg del sistema: `sudo apt install ffmpeg` (Ubuntu/Debian), `brew install ffmpeg` (macOS),
+`winget install ffmpeg` (Windows).
 
-### Voz sin internet (espeak-ng + voz femenina MBROLA)
+### Voz
 
-- Ubuntu/Debian: `sudo apt install espeak-ng mbrola mbrola-es3`
-- macOS: `brew install espeak-ng` (MBROLA no está en Homebrew: se usa la voz `es-419`)
-- Windows: instalador de <https://github.com/espeak-ng/espeak-ng/releases> (y añade `espeak-ng` al PATH)
-
-La voz sintética sirve para revisar el montaje; para publicar, el documento pide la voz de la dentista grabada en
-estudio (ver sección D).
+- **Kokoro (recomendada, offline):** `ef_dora` es femenina (la dentista del documento); `em_alex` es
+  masculina, con un tono parecido al de los narradores de referencia. Cámbiala con `--voz em_alex` o en
+  `config.VOZ_KOKORO`. La pronunciación es latinoamericana (`IDIOMA_KOKORO = "es-419"`).
+- **Grabación propia (para publicar):** `assets/audios/narracion/bloque_01.wav` … `bloque_11.wav`.
+- Alternativas automáticas si no hay Kokoro: edge-tts (requiere internet), espeak-ng (robótica) o
+  silencio (el video sale igual con subtítulos).
 
 ## C. Estructura de carpetas
 
 ```
 dental-video-generator/
 ├── generar_video.py      ← programa principal (ejecuta todo el flujo)
-├── guion.py              ← textos, tiempos, sonidos, reloj, música y recursos (lo que más editarás)
-├── config.py             ← formato, rutas, paleta, fuentes, marca, niveles de audio, motor de voz
-├── escenas.py            ← las 10 escenas, transiciones y capas (textos, reloj, subtítulos)
-├── graficos.py           ← dibujos procedurales (dientes, bacterias, pH, reloj, dentista…)
-├── audio.py              ← voz, alineación por palabra, música, efectos y mezcla
-├── subtitulos.py         ← agrupación, exportación SRT/VTT y render de subtítulos
+├── guion.py              ← narración, palabras resaltadas, etiquetas, sonidos y reloj (lo que más editarás)
+├── config.py             ← formato, rutas, paleta, fuentes, marca, voz y niveles de audio
+├── escenas.py            ← las 11 escenas, el cierre y las capas (subtítulos, marca de agua, reloj)
+├── graficos.py           ← dibujos procedurales y elementos de la fórmula (tarjetas, etiquetas, teléfono…)
+├── audio.py              ← voz Kokoro con tiempos por palabra, línea de tiempo, efectos y mezcla
+├── subtitulos.py         ← subtítulos karaoke y exportación SRT/VTT
 ├── utilidades.py         ← curvas de animación, tipografías, texto con emoji, composición
 ├── requirements.txt
 ├── assets/
-│   ├── imagenes/         ← logo.png, velcro.jpg, fotos de la dentista (opcional)
-│   ├── videos/           ← dentista_espejo.mp4, dentista_no.mp4, dentista_cierre.mp4… (opcional)
+│   ├── imagenes/         ← bloque_XX.jpg (sustituye un plano), logo.png
+│   ├── videos/           ← bloque_XX.mp4 (sustituye un plano)
 │   ├── audios/
-│   │   ├── narracion/    ← narracion_completa.wav o bloque_01.wav … bloque_10.wav
-│   │   ├── musica/       ← musica_fondo.mp3
-│   │   └── sfx/          ← impacto.wav, whoosh.wav… (sustituyen a los generados)
-│   └── fuentes/          ← Montserrat, Inter, JetBrains Mono (.ttf)
+│   │   ├── narracion/    ← bloque_01.wav … bloque_11.wav (tu voz)
+│   │   ├── musica/       ← musica_fondo.mp3 (opcional, desactivada en la fórmula)
+│   │   └── sfx/          ← golpe.wav, whoosh.wav… (sustituyen a los generados)
+│   ├── fuentes/          ← Montserrat, Inter, JetBrains Mono, Oswald (.ttf)
+│   └── modelos_voz/      ← modelo Kokoro (se descarga, no se sube a git)
 ├── subtitulos/           ← subtitulos.srt, subtitulos.vtt, palabras.json (generados)
-├── temp/                 ← caché de voz, mezcla.wav, tramos de video, previsualizaciones
-└── export/               ← 24_horas_sin_cepillarse.mp4
+├── temp/                 ← caché de voz, mezclas, plan.json, tramos de video, previsualizaciones
+└── export/               ← 24_horas_sin_cepillarse.mp4 y 24_horas_sin_cepillarse_sin_voz.mp4
 ```
 
 Cada carpeta de `assets/` tiene un `LEEME.md` con los nombres exactos que reconoce el programa.
 
 ## D. Cómo agregar imágenes, videos y audios
 
-No hay rutas inventadas que tengas que editar: el programa busca **nombres fijos** dentro de `assets/` y, si no
-encuentra el archivo, usa la alternativa animada. Al arrancar imprime qué recursos encontró.
+No hay rutas que editar: el programa busca **nombres fijos** dentro de `assets/`; si no encuentra el
+archivo, usa la versión generada.
 
-| Recurso | Dónde copiarlo | Si no existe |
+| Recurso | Dónde copiarlo | Efecto |
 | --- | --- | --- |
-| Dentista frente al espejo (escena 1) | `assets/videos/dentista_espejo.mp4` (o `.jpg` en imagenes) | Dentista ilustrada que se cepilla y sonríe |
-| Velcro real (escena 3, 0,5 s) | `assets/imagenes/velcro.jpg` o `assets/videos/velcro.mp4` | Textura de ganchos dibujada |
-| Persona que despierta (escena 7) | `assets/videos/persona_despierta.mp4` | Ilustración cómica en la cama |
-| Dentista responde «No» (escena 8) | `assets/videos/dentista_no.mp4` | Dentista ilustrada con boca sincronizada a la voz |
-| Dentista cierre (escena 10) | `assets/videos/dentista_cierre.mp4` | Dentista ilustrada sonriente |
-| Logotipo | `assets/imagenes/logo.png` | Círculo menta con un diente |
-| Voz completa | `assets/audios/narracion/narracion_completa.wav` | Por bloques o texto a voz |
-| Voz por bloques | `assets/audios/narracion/bloque_01.wav` … `bloque_10.wav` | Texto a voz para los que falten |
-| Música | `assets/audios/musica/musica_fondo.mp3` | Pista electrónica generada a 105 BPM |
-| Efecto concreto | `assets/audios/sfx/<nombre>.wav` | Efecto generado |
+| Tu voz | `assets/audios/narracion/bloque_01.wav` … `bloque_11.wav` | Sustituye la voz sintética; **todo el video se resincroniza** con la duración de tus tomas |
+| Un plano propio (video) | `assets/videos/bloque_XX.mp4` | Sustituye el plano animado del bloque XX (sin su audio, en bucle si es corto) |
+| Un plano propio (foto) | `assets/imagenes/bloque_XX.jpg` | Igual, con zoom lento |
+| Logotipo | `assets/imagenes/logo.png` | Aparece en el cierre bajo el @usuario |
+| Efecto de sonido | `assets/audios/sfx/<nombre>.wav` | Sustituye el efecto generado |
+| Música (opcional) | `assets/audios/musica/musica_fondo.mp3` + `MUSICA_DE_FONDO = True` | Música a −24 dB bajo la voz |
 
-Consejos para la voz grabada: un archivo por bloque es lo más cómodo (cada bloque dura 3–6 s; si una toma es más
-larga que su hueco, el programa la acelera hasta ×1,45 y avisa). Los subtítulos y las palabras ancla se recalculan a
-partir de tu grabación, así que las imágenes siguen sincronizadas.
+Los textos de cada bloque (y su número) están en `guion.py`. El @ y el nombre del consultorio se
+cambian en `MARCA` (`config.py`).
 
-Nombre del consultorio y @usuario: edita `MARCA` en `config.py`.
+### Cambiar textos, palabras resaltadas o tiempos
 
-### Cambiar textos, tiempos o escenas
-
-- **Narración, textos en pantalla, sonidos:** `guion.py` → `BLOQUES`. Las referencias `("palabra", bloque, desplazamiento)`
-  se mueven solas si cambia la voz.
-- **Duración de un bloque:** cambia `inicio`/`fin` en `guion.py` (los bloques deben quedar contiguos) y
-  `DURACION_TOTAL` en `config.py` si cambia el total.
-- **Reloj:** `RELOJ_CLAVES` (instante, horas). **Música:** `MUSICA_SECCIONES` y `BPM`.
-- **Colores, fuentes, subtítulos, niveles de audio:** `config.py`.
+- **Narración, palabra resaltada, etiquetas y sonidos:** `guion.py` → `BLOQUES`. Las referencias
+  `("palabra", desplazamiento)` siguen a la voz aunque cambie el texto o la grabación.
+- **Duración:** no se fija a mano; sale de la narración. Para acortar el video, acorta el texto o sube
+  `VELOCIDAD_KOKORO` (`config.py`); las pausas están en `PAUSA_ENTRE_BLOQUES` y `CIERRE_*`.
+- **Reloj de 24 h:** `RELOJ_CLAVES` (palabra en la que cambia, horas).
+- **Colores, fuentes, subtítulos, marca de agua y niveles de audio:** `config.py`.
 - **Aspecto de una escena:** el método `escena_*` correspondiente en `escenas.py`.
 
 ## E. Comando exacto para ejecutar
@@ -118,7 +131,8 @@ cd scripts/ad-hoc/dental-video-generator
 python generar_video.py
 ```
 
-Resultado: `export/24_horas_sin_cepillarse.mp4` (≈ 1,5 min con 4 núcleos).
+Resultado: `export/24_horas_sin_cepillarse.mp4` y `export/24_horas_sin_cepillarse_sin_voz.mp4`
+(≈3 min con 4 núcleos).
 
 Otras opciones útiles:
 
@@ -126,7 +140,9 @@ Otras opciones útiles:
 python generar_video.py --calidad borrador            # render rápido para revisar
 python generar_video.py --previsualizar 1 12 33.5     # solo PNG en temp/previews/
 python generar_video.py --desde 20 --hasta 31         # solo un tramo → export/parcial_020.0-031.0.mp4
-python generar_video.py --motor-voz espeak            # forzar el motor de voz (auto|edge|espeak|silencio)
+python generar_video.py --voz em_alex                 # voz masculina
+python generar_video.py --motor-voz espeak            # forzar motor (auto|kokoro|edge|espeak|silencio)
+python generar_video.py --solo-con-voz                # no exportar la versión sin voz
 python generar_video.py --limpiar                     # borra temp/ y rehace la voz
 python generar_video.py --hilos 2                     # menos procesos (equipos con poca RAM)
 ```
@@ -135,24 +151,26 @@ python generar_video.py --hilos 2                     # menos procesos (equipos 
 
 | Mensaje / síntoma | Causa y solución |
 | --- | --- |
-| `Faltan dependencias de Python: moviepy…` | Activa el entorno virtual y ejecuta `pip install -r requirements.txt`. |
+| `Faltan dependencias de Python: …` | Activa el entorno virtual y ejecuta `pip install -r requirements.txt`. |
 | `No se encontró FFmpeg` | Instala FFmpeg (sección B) o `pip install imageio-ffmpeg`. |
-| Voz: `silencio` (video sin narración) | No hay internet para edge-tts ni espeak-ng instalado. Instala espeak-ng o copia tu grabación en `assets/audios/narracion/`. El video se genera igual, con subtítulos. |
-| `edge-tts no está disponible (¿sin internet?)` | Usaste `--motor-voz edge` sin conexión o detrás de un proxy que la bloquea. Usa `auto` o `espeak`. |
-| `! Bloque N: la voz dura X s y el hueco es Y s` | El texto de ese bloque es demasiado largo para su tiempo. Acórtalo o amplía el bloque en `guion.py`. |
-| `guion.py usa la palabra ancla «…»` | Cambiaste la narración y una referencia `("palabra", bloque)` ya no existe. Actualízala. |
-| `Hay un hueco o solape entre los bloques…` | Los `fin`/`inicio` de bloques consecutivos deben coincidir. |
-| `Sonido desconocido «…»` | Usa un nombre de la lista de `assets/audios/sfx/LEEME.md` o añade ese archivo. |
-| Letras con otra tipografía | Faltan las fuentes: `python generar_video.py --descargar-fuentes` o copia los .ttf en `assets/fuentes/`. |
-| Emoji como flecha «↓» | No hay fuente de emoji a color. En Linux: `sudo apt install fonts-noto-color-emoji`. |
-| `No se pudo abrir el video …` | Archivo dañado o códec raro: conviértelo con `ffmpeg -i entrada.mov -c:v libx264 -pix_fmt yuv420p salida.mp4`. |
-| Se queda sin memoria o va muy lento | `--hilos 2` o `--calidad borrador`. |
-| La voz cambió pero no se nota | La voz se guarda en caché en `temp/`; usa `--limpiar`. |
-| `El archivo final no cumple el formato…` | Algún paso de FFmpeg falló a medias: borra `temp/` y repite; revisa que haya espacio en disco. |
+| `Kokoro no está instalado` / voz robótica | Ejecuta `pip install kokoro-onnx onnx` y `python generar_video.py --descargar-voz`. |
+| `No se pudo descargar …kokoro…` | Sin acceso a GitHub: descarga `kokoro-v1.0.onnx` y `voices-v1.0.bin` desde otra red y cópialos en `assets/modelos_voz/`. |
+| `Sin el paquete «onnx» los tiempos por palabra se estiman` | Funciona, pero la sincronía de subtítulos es aproximada: `pip install onnx` y vuelve a ejecutar. |
+| `La voz Kokoro «…» no existe` | Voces en español: `ef_dora`, `em_alex`, `em_santa`. |
+| `guion.py usa la palabra ancla «…»` | Cambiaste la narración y una referencia ya no existe: actualízala en `guion.py`. |
+| `El bloque N resalta «…», que no está en su narración` | La palabra de `resaltar` debe aparecer en el texto del bloque. |
+| `Sonido desconocido «…»` | Usa un nombre de `assets/audios/sfx/LEEME.md` o añade ese archivo. |
+| `! El video supera 75 s` | Acorta el guion o sube `VELOCIDAD_KOKORO`. |
+| Letras con otra tipografía | `python generar_video.py --descargar-fuentes` o copia los .ttf en `assets/fuentes/`. |
+| Emoji como símbolo | Instala una fuente de emoji a color (`sudo apt install fonts-noto-color-emoji`). |
+| `No se pudo abrir …` (video propio) | Conviértelo: `ffmpeg -i entrada.mov -c:v libx264 -pix_fmt yuv420p salida.mp4`. |
+| La voz cambió pero no se nota | La voz se guarda en caché en `temp/`: usa `--limpiar`. |
+| Lento o sin memoria | `--hilos 2` o `--calidad borrador`. |
 
 ## Antes de publicar (puntos de control del documento)
 
-- Validar el guion con la dentista que narra y sustituir la voz sintética por su grabación.
-- Revisar la animación con un odontólogo (forma de bacterias, escala, pH).
+- Validar el guion con la dentista y sustituir la voz sintética por su grabación (`bloque_XX.wav`).
+- Revisar la animación con un odontólogo (forma de bacterias, escala, pH) y la mención del
+  experimento de Löe (1965).
 - Comprobar la legibilidad de los subtítulos en un teléfono real con la interfaz de cada app.
-- Confirmar la licencia de la música si usas una propia (la generada no tiene derechos de terceros).
+- Fijar en los comentarios el dato del pH con su fuente, como propone el documento.
