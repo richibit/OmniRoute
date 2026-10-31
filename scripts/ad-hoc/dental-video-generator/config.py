@@ -182,7 +182,7 @@ URLS_FUENTES = {
 # ---------------------------------------------------------------------------
 MARCA = {
     "consultorio": "ladentista1",
-    "usuario": "@tuconsultorio",  # cámbialo por el @ real (aparece en la marca de agua y en el cierre)
+    "usuario": "@ladentista1",  # aparece en la marca de agua y en el cierre
 }
 
 # ---------------------------------------------------------------------------
