@@ -199,4 +199,5 @@ SUBTITULOS = {
 }
 
 # Marca de agua (icono de Instagram + @usuario) a la derecha, bajo los subtítulos.
+MARCA_AGUA_ACTIVA = False  # False: no aparece durante el video (el cierre con el logo sigue igual)
 MARCA_AGUA = {"x_icono": 965, "y_icono": 488, "tam_icono": 58, "y_usuario": 556, "x_derecha": 992}

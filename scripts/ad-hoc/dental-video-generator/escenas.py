@@ -240,6 +240,8 @@ class Renderizador:
 
     # ------------------------------------------------------------------ capas
     def capa_marca_agua(self, lienzo, t):
+        if not config.MARCA_AGUA_ACTIVA:
+            return
         m = config.MARCA_AGUA
         # el icono se ve a color un instante al principio y luego queda en blanco (como en la fórmula)
         a_color = 0.9 <= t < 2.6
