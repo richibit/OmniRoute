@@ -1,4 +1,55 @@
-# 24 horas sin cepillarse — generador de video vertical (fórmula de explicador viral)
+# Generador de videos verticales de salud dental
+
+Este proyecto produce dos videos verticales (1080×1920, 9:16, 30 FPS, H.264 + AAC) listos para
+TikTok, Instagram Reels y YouTube Shorts, cada uno con la fórmula de sus videos de referencia:
+
+| Video | Programa | Fórmula |
+| --- | --- | --- |
+| **La última vez que tu mamá te cepilló los dientes** (≈75 s) | `python generar_espejo.py` | Historia contada por el espejo del baño: personajes 3D tipo juguete, contador, salto de 25 años, sin voz |
+| **24 horas sin cepillarse** (≈66 s) | `python generar_video.py` | Explicador con voz, subtítulos karaoke, tarjetas de datos y llamada a compartir |
+
+## Video 2 · «La última vez que tu mamá te cepilló los dientes»
+
+Sigue el PDF «Guion de video: salud dental» escena por escena (tiempos, contador, subtítulos,
+tarjetas y cierre) con la fórmula de las referencias: cámara fija (el narrador es el espejo), contador
+a la izquierda a media altura, subtítulos cortos en itálica minúscula, salto de tiempo, giro final y
+cierre oscuro con un dato. **Sin voz en off y sin marca de agua durante el video**: el logo y el
+@usuario solo aparecen al final, al centro.
+
+| Elemento de la fórmula (medido en las referencias) | Cómo se aplica |
+| --- | --- |
+| Cámara fija, mundo 3D «de juguete», luz cálida de noche y fría de mañana | `juguete3d.py`: esferas, elipsoides y cápsulas con z-buffer, luz envolvente, luz de contorno, oclusión ambiental; caras pintadas que giran con la cabeza |
+| Contador a la izquierda: rótulo en versalitas, número grande en serif, línea de edad, lo especial en dorado | `VECES QUE TE CEPILLÓ LOS DIENTES · 4,626 · TIENES 7 AÑOS · LA ÚLTIMA` |
+| Título serif crema con la palabra clave en dorado + etiqueta «contado por…» (primeros 3 s) | «La última vez que tu mamá / te **cepilló** los dientes» · CONTADO POR EL ESPEJO DEL BAÑO |
+| Subtítulos en itálica minúscula, una línea, ~4 s con medio segundo sin texto, fundido de 0,3 s | Igual, centrados un poco abajo del centro |
+| Salto de tiempo con texto grande a la izquierda | «25 AÑOS / DESPUÉS» |
+| Cierre: último cuadro desenfocado y oscuro + título + dato con fuente + pregunta en dorado; logo al final | Igual (SEOP y AEP) y logo de Instagram con el @ de `config.py` |
+| Sonido: sin voz, música suave, efectos, golpe con el logo y silencio final, −14 LUFS | Caja de música + piano + fondo cálido (`musica.py`), 1 s de silencio antes del salto y la música sube ahí |
+
+**Ejecutar:**
+
+```bash
+cd scripts/ad-hoc/dental-video-generator
+python generar_espejo.py --descargar-fuentes   # la primera vez (Newsreader, Caveat…)
+python generar_espejo.py                       # → export/la_ultima_vez_que_tu_mama.mp4 (≈12 min con 4 núcleos)
+python generar_espejo.py --previsualizar 1 21 63   # PNG en temp/previews_espejo/
+python generar_espejo.py --desde 48 --hasta 58     # solo un tramo
+```
+
+**Qué editar:**
+
+- Textos, tiempos, contador, subtítulos, efectos, tarjetas, nombres y cierre: `guion_espejo.py`
+  (los nombres «Mateo» y «Ana» de la cajita y de la tarjeta son provisionales; si el protagonista es
+  niña, cambia «yo solito» por «yo solita» y «el que cuenta» por «la que cuenta»).
+- Coreografía de cada escena (posiciones, gestos, expresiones): métodos `escena_N` de `escenas_espejo.py`.
+- Aspecto de los personajes (colores de ropa, pelo, proporciones): `personajes.py` y `mama()`/`hijo()` en `escenas_espejo.py`.
+- Música propia: `assets/audios/musica/musica_espejo.mp3` (el segundo de silencio antes del salto se respeta).
+- Efectos propios: `assets/audios/sfx/<nombre>.wav` con los nombres de `musica.SFX` (agua, cepillado_suave,
+  vaso, pasos, papel, lata, monedas, lapiz, notificacion, cajon, golpe_logo).
+
+---
+
+## Video 1 · «24 horas sin cepillarse»
 
 Programa en Python que produce, de principio a fin, el video vertical «24 horas sin cepillarse»
 (1080×1920, 9:16, 30 FPS, H.264 + AAC), listo para TikTok, Instagram Reels y YouTube Shorts.
@@ -72,7 +123,13 @@ FFmpeg del sistema: `sudo apt install ffmpeg` (Ubuntu/Debian), `brew install ffm
 
 ```
 dental-video-generator/
-├── generar_video.py      ← programa principal (ejecuta todo el flujo)
+├── generar_espejo.py     ← video 2: «La última vez que tu mamá…» (programa principal)
+├── guion_espejo.py       ← video 2: escenas, contador, subtítulos, tarjetas y cierre
+├── escenas_espejo.py     ← video 2: decorado del baño, coreografía y textos en pantalla
+├── juguete3d.py          ← motor 3D mínimo (personajes y objetos tipo juguete)
+├── personajes.py         ← mamá, hijo y nieta (cinemática de brazos, caras pintadas)
+├── musica.py             ← video 2: caja de música, piano y efectos
+├── generar_video.py      ← video 1: «24 horas sin cepillarse» (programa principal)
 ├── guion.py              ← narración, palabras resaltadas, etiquetas, sonidos y reloj (lo que más editarás)
 ├── config.py             ← formato, rutas, paleta, fuentes, marca, voz y niveles de audio
 ├── escenas.py            ← las 11 escenas, el cierre y las capas (subtítulos, marca de agua, reloj)
@@ -92,7 +149,7 @@ dental-video-generator/
 │   └── modelos_voz/      ← modelo Kokoro (se descarga, no se sube a git)
 ├── subtitulos/           ← subtitulos.srt, subtitulos.vtt, palabras.json (generados)
 ├── temp/                 ← caché de voz, mezclas, plan.json, tramos de video, previsualizaciones
-└── export/               ← 24_horas_sin_cepillarse.mp4 y 24_horas_sin_cepillarse_sin_voz.mp4
+└── export/               ← la_ultima_vez_que_tu_mama.mp4, 24_horas_sin_cepillarse.mp4 (+ _sin_voz)
 ```
 
 Cada carpeta de `assets/` tiene un `LEEME.md` con los nombres exactos que reconoce el programa.

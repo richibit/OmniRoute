@@ -161,6 +161,44 @@ FUENTES = {
         ],
         700,
     ),
+    # Video «La última vez que tu mamá…»: serif clásica, itálica para subtítulos y letra manuscrita.
+    "serif": (
+        [
+            DIR_FUENTES / "Newsreader[opsz,wght].ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+            "C:/Windows/Fonts/georgia.ttf",
+            "/System/Library/Fonts/Supplemental/Georgia.ttf",
+        ],
+        400,
+    ),
+    "serif_italica": (
+        [
+            DIR_FUENTES / "Newsreader-Italic[opsz,wght].ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
+            "C:/Windows/Fonts/georgiai.ttf",
+            "/System/Library/Fonts/Supplemental/Georgia Italic.ttf",
+        ],
+        400,
+    ),
+    "versalitas": (
+        [
+            DIR_FUENTES / "Inter[opsz,wght].ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ],
+        560,
+    ),
+    "manuscrita": (
+        [
+            DIR_FUENTES / "Caveat[wght].ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+            "C:/Windows/Fonts/segoepr.ttf",
+        ],
+        600,
+    ),
 }
 FUENTE_EMOJI = [
     DIR_FUENTES / "NotoColorEmoji.ttf",
@@ -175,6 +213,9 @@ URLS_FUENTES = {
     "Inter[opsz,wght].ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter%5Bopsz,wght%5D.ttf",
     "JetBrainsMono[wght].ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf",
     "Oswald[wght].ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/oswald/Oswald%5Bwght%5D.ttf",
+    "Newsreader[opsz,wght].ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/newsreader/Newsreader%5Bopsz,wght%5D.ttf",
+    "Newsreader-Italic[opsz,wght].ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/newsreader/Newsreader-Italic%5Bopsz,wght%5D.ttf",
+    "Caveat[wght].ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/caveat/Caveat%5Bwght%5D.ttf",
 }
 
 # ---------------------------------------------------------------------------

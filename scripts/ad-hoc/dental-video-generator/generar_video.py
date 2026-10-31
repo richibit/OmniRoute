@@ -188,10 +188,12 @@ def preparar_audio_y_plan():
 _RENDER = None
 
 
-def _iniciar_trabajador(ruta_plan):
+def _iniciar_trabajador(ruta_plan, modulo="escenas"):
+    """Cada proceso crea su propio renderizador (el del video indicado por `modulo`)."""
     global _RENDER
-    import escenas
+    import importlib
 
+    escenas = importlib.import_module(modulo)
     _RENDER = escenas.Renderizador(json.loads(Path(ruta_plan).read_text(encoding="utf-8")))
 
 
@@ -217,15 +219,15 @@ def _renderizar_tramo(args):
     return f1 - f0
 
 
-def renderizar_video(ruta_plan, f_ini, f_fin, calidad, hilos):
-    carpeta = config.DIR_TEMP / "tramos"
+def renderizar_video(ruta_plan, f_ini, f_fin, calidad, hilos, modulo="escenas"):
+    carpeta = config.DIR_TEMP / ("tramos" if modulo == "escenas" else f"tramos_{modulo}")
     if carpeta.exists():
         shutil.rmtree(carpeta)
     carpeta.mkdir(parents=True)
     paso = config.FPS
     tareas = [(f0, min(f_fin, f0 + paso), carpeta / f"tramo_{i:04d}.mp4", calidad) for i, f0 in enumerate(range(f_ini, f_fin, paso))]
     total, hechos, inicio = f_fin - f_ini, 0, time.time()
-    with mp.get_context("spawn").Pool(hilos, initializer=_iniciar_trabajador, initargs=(str(ruta_plan),)) as pool:
+    with mp.get_context("spawn").Pool(hilos, initializer=_iniciar_trabajador, initargs=(str(ruta_plan), modulo)) as pool:
         for n in pool.imap_unordered(_renderizar_tramo, tareas):
             hechos += n
             restante = (time.time() - inicio) / hechos * (total - hechos)
@@ -233,7 +235,7 @@ def renderizar_video(ruta_plan, f_ini, f_fin, calidad, hilos):
     print()
     lista = carpeta / "lista.txt"
     lista.write_text("".join(f"file '{t[2].name}'\n" for t in tareas), encoding="utf-8")
-    salida = config.DIR_TEMP / "video_sin_audio.mp4"
+    salida = config.DIR_TEMP / ("video_sin_audio.mp4" if modulo == "escenas" else f"video_sin_audio_{modulo}.mp4")
     audio.ejecutar(
         [audio.ffmpeg_exe(), "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lista), "-c", "copy", str(salida)],
         "la unión de los tramos de video",
