@@ -181,7 +181,7 @@ URLS_FUENTES = {
 # Marca del consultorio (marca de agua y cierre)
 # ---------------------------------------------------------------------------
 MARCA = {
-    "consultorio": "Tu Consultorio Dental",  # cámbialo por el nombre real
+    "consultorio": "ladentista1",
     "usuario": "@tuconsultorio",  # cámbialo por el @ real (aparece en la marca de agua y en el cierre)
 }
 
