@@ -149,7 +149,7 @@ def _rot_eje_y(e):
 
 
 LATA = (300.0, 118.0)  # x, z sobre la encimera
-LATA_H = (72.0, 27.0, 46.0)
+LATA_H = (54.0, 24.0, 37.0)  # cajita de recuerdos (semiejes)
 
 
 @functools.lru_cache(maxsize=2)
@@ -199,9 +199,10 @@ def _tex_interior():
     return np.asarray(img, np.float32) / 255
 
 
-def lata(abierta=0.0, centro=None, rot=None, llena=True):
+def lata(abierta=0.0, centro=None, rot=None, llena=True, bisagra="atras"):
     """
-    Cajita de lata roja con el nombre del niño. `abierta` 0–1 = ángulo de la tapa (bisagra atrás).
+    Cajita de lata roja con el nombre del niño. `abierta` 0–1 = ángulo de la tapa; la bisagra va
+    atrás (−z, del lado de quien la usa) o `bisagra="delante"` (+z: la tapa abierta no estorba al brazo).
     Por defecto está sobre la encimera; con `centro` y `rot` se puede llevar en las manos.
     """
     hx, hy, hz = LATA_H
@@ -215,11 +216,12 @@ def lata(abierta=0.0, centro=None, rot=None, llena=True):
     prims = [J.Caja(tuple(c), (hx, hy, hz), (176, 62, 58), rot=R, bisel=0.28, brillo=0.45, texturas=texturas)]
     # tapa con bisagra en el borde de atrás (−z local)
     ang = abierta * math.radians(105)
-    bis = c + R @ np.array([0, -hy, -hz], np.float32)
-    Rt = R @ J.rot_x(ang)
-    centro_tapa = bis + Rt @ np.array([0, -5, hz + 2], np.float32)
+    sz = -1.0 if bisagra == "atras" else 1.0
+    bis = c + R @ np.array([0, -hy, sz * hz], np.float32)
+    Rt = R @ J.rot_x(-sz * ang)
+    centro_tapa = bis + Rt @ np.array([0, -5, -sz * (hz + 2)], np.float32)
     prims.append(J.Caja(tuple(centro_tapa), (hx + 3, 6, hz + 2), (204, 88, 78), rot=Rt, bisel=0.35, brillo=0.5))
-    return etiqueta(prims, "lata"), bis + Rt @ np.array([0, -10, 2 * hz], np.float32)  # borde delantero de la tapa (para empujarla)
+    return etiqueta(prims, "lata"), bis + Rt @ np.array([0, -10, -sz * 2 * hz], np.float32)  # borde libre de la tapa (para empujarla)
 
 
 # ---------------------------------------------------------------------------

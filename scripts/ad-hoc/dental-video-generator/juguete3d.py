@@ -99,6 +99,67 @@ class Camara:
 
 
 # ---------------------------------------------------------------------------
+# Distancia con signo a las primitivas (para colocar codos sin atravesar nada)
+# ---------------------------------------------------------------------------
+def _sdf_cil(q, r, hy):
+    dr = np.sqrt(q[:, 0] ** 2 + q[:, 2] ** 2) - r
+    dy = np.abs(q[:, 1]) - hy
+    fuera = np.sqrt(np.maximum(dr, 0) ** 2 + np.maximum(dy, 0) ** 2)
+    return fuera + np.minimum(np.maximum(dr, dy), 0)
+
+
+def distancia(p, pts):
+    """Distancia con signo (negativa dentro) de los puntos `pts` (N, 3) a la primitiva `p`."""
+    pts = np.asarray(pts, np.float32)
+    if isinstance(p, Elipsoide):
+        q = (pts - p.c) @ p.rot
+        k0 = np.linalg.norm(q / p.r, axis=1)
+        k1 = np.linalg.norm(q / (p.r * p.r), axis=1)
+        return k0 * (k0 - 1) / np.maximum(k1, 1e-9)
+    if isinstance(p, Capsula):
+        k = p.k
+        q = pts / k
+        a, b = p.a / k, p.b / k
+        ba = b - a
+        t = np.clip(((q - a) @ ba) / max(float(ba @ ba), 1e-9), 0, 1)
+        return (np.linalg.norm(q - (a + t[:, None] * ba), axis=1) - p.r) * float(k.min())
+    if isinstance(p, Caja):
+        q = np.abs((pts - p.c) @ p.rot) - p.h
+        return np.linalg.norm(np.maximum(q, 0), axis=1) + np.minimum(q.max(axis=1), 0)
+    if isinstance(p, Cilindro):
+        q = (pts - p.c) @ p.rot
+        ext = _sdf_cil(q, p.r, p.hy)
+        if p.abierto:
+            y0, y1 = -p.hy - 80.0, p.hy - 6.0
+            qc = q.copy()
+            qc[:, 1] -= (y0 + y1) / 2
+            return np.maximum(ext, -_sdf_cil(qc, p.r - 5.0, (y1 - y0) / 2))
+        return ext
+    return np.full(len(pts), np.inf, np.float32)
+
+
+def obstaculo(prims, extra=None):
+    """Función `pen(puntos, radios)` → cuánto se mete cada esfera (punto, radio) en `prims` (y en `extra`, otra función igual)."""
+    prims = [p for p in prims if p is not None]
+    cajas = [(p, *map(lambda v: np.asarray(v, np.float32), p.aabb())) for p in prims]
+
+    def pen(pts, radios):
+        pts = np.asarray(pts, np.float32)
+        radios = np.asarray(radios, np.float32)
+        mn, mx = pts.min(0) - radios.max(), pts.max(0) + radios.max()
+        out = np.zeros(len(pts), np.float32)
+        for p, a, b in cajas:
+            if np.any(a > mx) or np.any(b < mn):
+                continue
+            out = np.maximum(out, radios - distancia(p, pts))
+        if extra is not None:
+            out = np.maximum(out, extra(pts, radios))
+        return out
+
+    return pen
+
+
+# ---------------------------------------------------------------------------
 # Iluminación
 # ---------------------------------------------------------------------------
 class Iluminacion:

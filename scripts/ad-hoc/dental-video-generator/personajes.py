@@ -17,7 +17,7 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw
 
-from juguete3d import Capsula, Cilindro, Elipsoide, _norm
+from juguete3d import Capsula, Cilindro, Elipsoide, _norm, obstaculo
 
 PIEL = (238, 190, 152)
 
@@ -453,6 +453,7 @@ class Personaje:
                 continue
             n0 = len(prims)
             muneca, d, nrm, params, polo = self._mano_objetivo(pose, lado, sx, hombro, l1, l2, L, R)
+            polo = self._mejor_polo(pose, hombro, muneca, l1, l2, polo, P, R, prims)
             codo, mu = ik(hombro, muneca, l1, l2, polo)
             info["error"][lado] = float(np.linalg.norm(mu - muneca))
             if params is None:  # mano colgando: sigue al antebrazo
@@ -474,6 +475,45 @@ class Personaje:
             info["puntos"][lado] = pts
             info.setdefault("codos", {})[lado] = tuple(float(v) for v in codo)
         return prims, info
+
+    def _mejor_polo(self, pose, hombro, muneca, l1, l2, polo, P, R, cuerpo):
+        """
+        Hacia dónde va el codo: prueba girar el polo pedido alrededor del eje hombro→muñeca y se queda
+        con el que no mete el brazo en nada (la otra persona, la encimera, los objetos de `pose["evitar"]`
+        y su propio cuerpo para el antebrazo), lo más parecido posible al pedido.
+        """
+        evitar = pose.get("evitar")
+        if evitar is None:
+            return polo
+        H = np.asarray(hombro, np.float32)
+        W = np.asarray(muneca, np.float32)
+        u = _norm(W - H)
+        p0 = np.asarray(polo, np.float32)
+        perp = p0 - u * float(p0 @ u)
+        if float(np.linalg.norm(perp)) < 1e-4:
+            return polo
+        perp = _norm(perp)
+        b = np.cross(u, perp)
+        g1, g2 = P["grosor"][0] * R, P["grosor"][1] * R
+        tronco = [q for q in cuerpo if getattr(q, "grupo", "") in ("cabeza", "cuello", "torso", "cadera") or getattr(q, "grupo", "").startswith(("brazo", "mano"))]
+        propio = obstaculo(tronco)
+        propio_alto = obstaculo([q for q in cuerpo if getattr(q, "grupo", "") in ("cabeza", "cadera")])  # el brazo (no el hombro) tampoco entra en la cadera ni en la cabeza
+        t1 = np.linspace(0.45, 1.0, 5, dtype=np.float32)[:, None]
+        t2 = np.linspace(0.0, 0.85, 6, dtype=np.float32)[:, None]
+        r1 = np.full(5, g1 + 2.0, np.float32)
+        r2 = np.full(6, g2 + 2.0, np.float32)
+        mejor, costo_min = polo, None
+        for grados in (0, 15, -15, 30, -30, 45, -45, 60, -60, 80, -80, 100, -100, 125, -125, 150, -150, 180):
+            a = math.radians(grados)
+            pol = perp * math.cos(a) + b * math.sin(a)
+            codo, mu = ik(H, W, l1, l2, pol)
+            p1 = H + (codo - H) * t1
+            p2 = codo + (mu - codo) * t2
+            pen = np.concatenate([evitar(p1, r1), evitar(p2, r2), propio(p2, r2), propio_alto(p1, r1)])
+            costo = float((pen ** 2).sum()) + 12.0 * a * a
+            if costo_min is None or costo < costo_min - 1e-6:
+                mejor, costo_min = tuple(float(v) for v in pol), costo
+        return mejor
 
     def _etiquetar(self, prims, desde, grupo):
         """Marca dueño y parte del cuerpo de las primitivas añadidas desde `desde` (para revisar choques)."""

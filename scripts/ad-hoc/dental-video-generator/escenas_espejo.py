@@ -103,6 +103,27 @@ def escalon(t, centros, dur=0.16):
     return sum(suave(progreso(t, c, c + dur)) for c in centros)
 
 
+def pen_encimera(pts, radios):
+    """Cuánto se mete cada esfera (punto, radio) en el mueble de la encimera (fuera del hueco del lavabo)."""
+    pts = np.asarray(pts, np.float32)
+    dt = S.ENCIMERA_Y - pts[:, 1]  # >0: por encima de la superficie
+    df = S.ENCIMERA_Z0 - pts[:, 2]  # >0: por delante del canto
+    fuera = (dt > 0) & (df > 0)
+    d = np.where(fuera, np.sqrt(np.maximum(dt, 0) ** 2 + np.maximum(df, 0) ** 2), np.maximum(dt, df))
+    L = S.LAVABO
+    en_lavabo = (((pts[:, 0] - L["x"]) / L["rx"]) ** 2 + ((pts[:, 2] - L["z"]) / L["rz"]) ** 2) < 0.9
+    return np.where(en_lavabo & (dt < 0), 0.0, np.maximum(np.asarray(radios, np.float32) - d, 0.0)).astype(np.float32)
+
+
+@functools.lru_cache(maxsize=1)
+def _utileria_obstaculos():
+    return tuple(lista_utileria(("amarillo", "azul"), True, True))
+
+
+def utileria_obstaculos():
+    return list(_utileria_obstaculos())
+
+
 def punto_mano(spec, clave, tipo, lado, escala=1.0):
     """Dónde queda el punto `clave` (yemas, palma, pinza…) de una mano pedida con otra clave (para enlazar trayectorias sin saltos)."""
     sx = -1 if lado == "izq" else 1
@@ -762,9 +783,15 @@ class Renderizador:
         pegar(img, spr, 44 - 40, 700 - 40, alfa=0.95 * a, ancla="esquina")
 
     # ======================================================= construcción
-    def persona(self, t, quien, pose, pos, escala=1.0, desfase=0.0, respira=True, vaiven=True):
-        """Personaje con respiración, parpadeo, leve vaivén de cabeza y del peso; registra si alguna mano no llega."""
+    def persona(self, t, quien, pose, pos, escala=1.0, desfase=0.0, respira=True, vaiven=True, evitar=None):
+        """
+        Personaje con respiración, parpadeo, leve vaivén de cabeza y del peso; registra si alguna mano no llega.
+        `evitar`: primitivas (otra persona, objetos) que sus brazos no deben atravesar; con ellas, la encimera y la
+        utilería fija, cada codo busca solo su mejor posición.
+        """
         x, y, z = pos
+        if evitar is not None:
+            pose = dict(pose, evitar=J.obstaculo(list(evitar) + utileria_obstaculos(), extra=pen_encimera))
         if respira:
             y += respiracion(t, desfase)
         if vaiven:  # el peso pasa muy despacio de un pie al otro
@@ -1346,65 +1373,107 @@ class Renderizador:
         sombras = [(pos_n[0] - 72, 64, 36, 20, 0.4 * (1 - ensena)), (pos_n[0] + 72, 64, 36, 20, 0.4), (pos_m[0] + 150, 60, 36, 20, 0.4)]
         return self.componer(t, "manana", prims, marco=marco or (), marco_sombra=f_sombra, sombras=sombras)
 
-    # 7 · Se le cae el primer diente: lo deja en un pañuelito en la mano de mamá; ella lo envuelve y lo guarda en la cajita
+    # 7 · Se le cae el primer diente: lo deja en el pañuelito que mamá tiene en la palma; ella lo envuelve y lo guarda en la cajita
     def escena_7(self, t, e):
         lt = t - e["inicio"]
         esc = 1.06
-        pos_n = (NINO4[0], y_cabeza("nino4", 215, esc), NINO4[2])
-        ib = self.info(t, hijo(6), {"cara": "dientes"}, pos_n, escala=esc, desfase=1.7)
+        quien_n = hijo(6)
+        pos_n = (470.0, y_cabeza("nino4", 215, esc), NINO4[2])
+        pos_m = (880.0, YM, -20.0)
+        lata_c = np.array([760.0, S.ENCIMERA_Y - U.LATA_H[1], 108.0], np.float32)  # delante de su lado izquierdo de la pantalla, sin tocar el vaso
+        palma_m = np.array([600.0, 1102.0, 132.0], np.float32)  # mamá acerca la palma bajo la mano del niño (su brazo pasa por delante, abajo)
+        sobre_lata = lata_c + np.array([-6.0, -U.LATA_H[1] - 84.0, -2.0], np.float32)  # alto: el antebrazo pasa por encima de la tapa abierta
+        tapa = 1.0 - suave(progreso(lt, 2.74, 3.04))
+        prims_lata, borde_tapa = U.lata(tapa, centro=lata_c, llena=False, bisagra="delante")
+        prims = list(prims_lata)
+        # --- el niño: enseña el diente entre los dedos, lo lleva sobre la palma de mamá y lo suelta
+        mira_n = None
+        pose_n = {"cara": "dientes", "hueco": True, "cabeceo": 0.1 * suave(progreso(lt, 0.9, 1.2)) * (1 - suave(progreso(lt, 1.9, 2.2)))}
+        ib = self.info(t, quien_n, pose_n, pos_n, escala=esc, desfase=1.7)
         hx, hy, hz = ib["cabeza"]
         R = ib["R"]
-        pinza_n = np.array([hx + 1.0 * R, hy + 1.45 * R, hz + 1.15 * R], np.float32)
-        palma_m = pinza_n + np.array([12, 50, 4], np.float32)
-        lata_c = np.array([690.0, S.ENCIMERA_Y - U.LATA_H[1], 100.0], np.float32)
-        tapa = 1.0 - suave(progreso(lt, 2.72, 3.02))
-        prims_lata, borde_tapa = U.lata(tapa, centro=lata_c, llena=False)
-        prims = list(prims_lata)
+        ensena = np.array([hx + 0.95 * R, hy + 0.35 * R, hz + 0.85 * R], np.float32)  # lo enseña en alto, junto a la cara
+        suelta_p = palma_m + np.array([0.0, -46.0, 0.0], np.float32)
+        p_diente = np.array(curva(lt, [(0.0, tuple(ensena)), (0.9, tuple(ensena + np.array([0.0, -4.0, 0.0], np.float32))), (1.42, tuple(suelta_p))]), np.float32)
+        p_diente = p_diente + np.array([0.0, 3.0 * math.sin(lt * 3.0) * (1 - progreso(lt, 0.9, 1.1)), 0.0], np.float32)
+        gira = suave(progreso(lt, 0.9, 1.4))  # al soltarlo sobre la palma de mamá, los dedos apuntan hacia abajo (la mano queda arriba)
+        dir_n = kf(gira, [(0.0, (0.35, -0.75, 0.5)), (1.0, (0.12, 0.82, 0.55))])
+        polo_n = kf(gira, [(0.0, (0.5, 0.8, -0.3)), (1.0, (0.15, -0.6, -0.6))])  # al soltarlo, el codo sube: su antebrazo baja desde arriba, lejos del de mamá
+        pinza_n = {"pinza": tuple(p_diente), "dir": dir_n, "nrm": (-0.6, 0.1, 0.8), "forma": "pinza", "polo": polo_n}
         reposo_n = self.mano_en_borde(pos_n[0] + 100, "der")
-        if lt < 1.45:
-            mano_n = {"pinza": tuple(pinza_n + np.array([0, 3 * math.sin(lt * 3), 0], np.float32)), "dir": (0.35, -0.75, 0.5), "nrm": (-0.6, 0.1, 0.8)}
-        else:
-            baja = suave(progreso(lt, 1.6, 2.2))
-            destino = np.asarray(reposo_n["palma"], np.float32)
-            mano_n = {"pinza": tuple(pinza_n * (1 - baja) + destino * baja), "dir": (0.35, -0.75, 0.5), "nrm": (-0.6, 0.1, 0.8), "mezcla": ("pinza", "relajada", baja)} if baja < 0.98 else reposo_n
-        cae = suave(progreso(lt, 1.45, 1.58))
-        if lt < 1.8:
-            d_prims = U.diente(pinza_n * (1 - cae) + (palma_m + np.array([0, -10, 0], np.float32)) * cae)
-            U.permitir(d_prims, ("hijo", "mano_der"), ("mama", "mano_izq"), ("papel", "objeto"))
-            prims += d_prims
-        pb, _ = self.persona(t, hijo(6), {"cara": "dientes", "hueco": True, "mano_der": mano_n, "mano_izq": self.mano_en_borde(pos_n[0] - 100, "izq"), "cabeceo": 0.12 if 0.8 < lt < 1.8 else 0.0, "giro": 0.25 if 0.8 < lt < 1.8 else 0.0}, pos_n, escala=esc, desfase=1.7)
-        llega = np.array(curva(lt, [(0.6, (MAMA[0] - 110, S.ENCIMERA_Y - 30, 60)), (1.25, tuple(palma_m))]), np.float32)
-        boca_lata = lata_c + np.array([0, -U.LATA_H[1] - 40, 0], np.float32)
-        if lt < 1.65:
-            palma = llega if lt < 1.25 else palma_m
-            mano_m = {"palma": tuple(palma), "dir": (-0.9, 0.0, 0.45), "nrm": (0.0, -1.0, 0.0), "forma": "abierta", "polo": (-0.3, 1.0, -0.2)}
-            pp = U.papelito(np.asarray(palma) + np.array([0, -14, 0], np.float32), 0.0, J.rot_y(-0.3))
+        if lt < 1.5:
+            mano_n = pinza_n
+        else:  # abre los dedos y vuelve a apoyarse
+            pinza_n["mezcla"] = ("pinza", "relajada", progreso(lt, 1.5, 1.6))
+            mano_n = self.transicion(t, quien_n, pose_n, pos_n, "der", pinza_n, reposo_n, suave(progreso(lt, 1.52, 1.86)), escala=esc, desfase=1.7, arco=(-12.0, -66.0, -6.0))
+        if lt > 0.95:  # mira hacia la mano de mamá sin agachar del todo la cabeza (se le sigue viendo la cara)
+            obj = palma_m if lt < 2.2 else lata_c
+            mira_n = (float(obj[0]), float(obj[1]) - 150.0, float(obj[2]) + 320.0)
+        if mira_n is not None:
+            pose_n["mirar"] = mira_n
+        pose_nb = dict(pose_n, mano_der=mano_n, mano_izq=self.mano_en_borde(pos_n[0] - 100, "izq"))
+        pb, _ = self.persona(t, quien_n, pose_nb, pos_n, escala=esc, desfase=1.7, evitar=prims_lata)
+        # --- mamá: palma abierta con el pañuelito, lo envuelve, lo lleva a la cajita, lo suelta, cierra la tapa y le da dos palmaditas
+        pose_m = {"cara": "sonrisa", "mano_der": self.mano_en_encimera(pos_m[0] + 150, "der", 60)}
+        recibe = {"palma": tuple(palma_m), "dir": (-0.88, 0.0, 0.47), "nrm": (0.0, -1.0, 0.0), "forma": "abierta", "polo": (-0.15, 1.0, 0.05)}
+        envuelve = suave(progreso(lt, 1.74, 2.02))
+        if lt < 1.66:  # sube la mano junto al cuerpo (por fuera de la encimera) y la adelanta con la palma hacia arriba
+            alzada = {"palma": (742.0, 1110.0, -30.0), "dir": (-0.3, -0.85, 0.42), "nrm": (-0.3, -0.4, 0.9), "forma": "relajada", "polo": (-0.15, 1.0, 0.05)}
+            mano_m = self.transicion(t, mama(26), pose_m, pos_m, "izq", None, alzada, suave(progreso(lt, 0.2, 0.55)))
+            mano_m = self.transicion(t, mama(26), pose_m, pos_m, "izq", mano_m, recibe, suave(progreso(lt, 0.5, 0.95)))
+        elif lt < 2.5:  # cierra la mano sobre el pañuelo y la lleva, palma abajo, sobre la cajita
+            lleva = suave(progreso(lt, 1.98, 2.46))
+            p = np.array(curva(lt, [(1.98, tuple(palma_m)), (2.25, tuple(palma_m * 0.5 + sobre_lata * 0.5 + np.array([0.0, -26.0, 0.0], np.float32))), (2.46, tuple(sobre_lata))]), np.float32) if lt > 1.98 else palma_m
+            nrm = kf(lleva, [(0.0, (0.0, -1.0, 0.0)), (0.5, (-0.9, 0.0, 0.3)), (1.0, (0.0, 1.0, 0.15))])
+            mano_m = {"palma": tuple(p), "dir": (-0.75, 0.25 * lleva, 0.6), "nrm": nrm, "mezcla": ("abierta", "agarre", 0.82 * envuelve), "polo": (-0.15, 1.0, 0.05)}
+        elif lt < 2.74:  # abre la mano: la bolita cae dentro
+            mano_m = {"palma": tuple(sobre_lata), "dir": (-0.75, 0.25, 0.6), "nrm": (0.0, 1.0, 0.15), "mezcla": ("agarre", "abierta", 0.82 * (1 - progreso(lt, 2.5, 2.62))), "polo": (-0.15, 1.0, 0.05)}
+        elif lt < 3.06:  # empuja la tapa con las yemas
+            yemas = np.asarray(borde_tapa, np.float32) + np.array([0.0, -4.0, -6.0], np.float32)
+            empuja = {"yemas": tuple(yemas), "dir": (0.0, 0.35, 1.0), "nrm": (-0.15, 1.0, 0.05), "forma": "abierta", "polo": (-0.15, 1.0, 0.05)}
+            abierta = {"palma": tuple(sobre_lata), "dir": (-0.75, 0.25, 0.6), "nrm": (0.0, 1.0, 0.15), "forma": "abierta", "polo": (-0.15, 1.0, 0.05)}
+            mano_m = self.transicion(t, mama(26), pose_m, pos_m, "izq", abierta, empuja, suave(progreso(lt, 2.74, 2.86)))
+            U.permitir(prims_lata, ("mama", "mano_izq"))
+        else:  # la mano descansa sobre la tapa y le da dos palmaditas
+            pal = 6.0 * pulso(lt, [3.3, 3.62], 0.07)
+            descansa = {"palma": tuple(lata_c + np.array([0.0, -U.LATA_H[1] - 13.0 - pal, 0.0], np.float32)), "dir": (-0.15, 0.2, 1.0), "nrm": (0.0, 1.0, 0.0), "forma": "relajada", "polo": (-0.15, 1.0, 0.05)}
+            yemas = np.asarray(borde_tapa, np.float32) + np.array([0.0, -4.0, -6.0], np.float32)
+            empuja = {"yemas": tuple(yemas), "dir": (0.0, 0.35, 1.0), "nrm": (-0.15, 1.0, 0.05), "forma": "abierta", "polo": (-0.15, 1.0, 0.05)}
+            mano_m = self.transicion(t, mama(26), pose_m, pos_m, "izq", empuja, descansa, suave(progreso(lt, 3.06, 3.2)))
+            U.permitir(prims_lata, ("mama", "mano_izq"))
+        pose_m["mano_izq"] = mano_m
+        pose_m["mirar"] = tuple(p_diente) if lt < 1.6 else (tuple(lata_c) if lt < 3.2 else tuple(ib["cabeza"]))
+        pm, im = self.persona(t, mama(26), pose_m, pos_m, evitar=pb + prims_lata)
+        pb, _ = self.persona(t, quien_n, pose_nb, pos_n, escala=esc, desfase=1.7, evitar=pm + prims_lata)  # segunda pasada: el niño también esquiva a mamá
+        # el pañuelito (y el diente) van con la mano de mamá
+        pts = im["puntos"].get("izq")
+        if lt < 2.62 and pts:
+            d_m, n_m, _ = pts["marco"]
+            if lt < 1.98:  # lo trae hecho bolita en la mano y lo extiende sobre la palma; luego lo envuelve
+                extiende = suave(progreso(lt, 0.62, 0.95))
+                k_bola = max(1.0 - extiende, envuelve)
+                c_pap = np.asarray(pts["palma"], np.float32) + n_m * (3.0 + 8.0 * k_bola) if extiende > 0.02 else np.asarray(pts["agarre"], np.float32)
+                pp = U.papelito(c_pap, k_bola, J.rot_y(-0.3) if k_bola < 0.5 else None)
+            elif lt < 2.55:
+                c_pap = np.asarray(pts["agarre"], np.float32)
+                pp = U.papelito(c_pap, 1.0)
+            else:
+                k = progreso(lt, 2.55, 2.66)
+                c0 = np.asarray(pts["agarre"], np.float32)
+                fondo = lata_c + np.array([0.0, U.LATA_H[1] - 15.0, 0.0], np.float32)
+                c_pap = c0 + (fondo - c0) * (k * k)
+                pp = U.papelito(c_pap, 1.0)
+                U.permitir(pp, ("lata", "objeto"))
             self.sostenido(pp, "mama", "izq")
             prims += pp
-        elif lt < 2.62:
-            k_bola = suave(progreso(lt, 1.65, 2.0))
-            p = np.array(curva(lt, [(1.65, tuple(palma_m)), (2.05, tuple(palma_m + np.array([30, 10, 0], np.float32))), (2.5, tuple(boca_lata))]), np.float32)
-            mano_m = {"pinza": tuple(p), "dir": (-0.6, 0.5, 0.6), "nrm": (-0.1, 0.4, -0.9), "mezcla": ("abierta", "pinza", k_bola), "polo": (-0.3, 1.0, -0.2)}
-            pp = U.papelito(p + np.array([0, 4, 0], np.float32), k_bola, J.rot_y(-0.3))
-            self.sostenido(pp, "mama", "izq")
-            prims += pp
-        else:
-            if lt < 2.75:  # la bolita cae dentro
-                k = progreso(lt, 2.62, 2.72)
-                pp = U.papelito(boca_lata + np.array([0, 40 * k * k, 0], np.float32), 1.0)
-                U.permitir(pp, ("lata", "objeto"), ("mama", "mano_izq"))
-                prims += pp
-            if lt < 3.05:
-                yemas = np.asarray(borde_tapa, np.float32)
-                mano_m = {"yemas": tuple(yemas + np.array([0, -3, -6], np.float32)), "dir": (0.0, 0.35, 1.0), "nrm": (0, 1, -0.2), "mezcla": ("pinza", "abierta", progreso(lt, 2.62, 2.75)), "polo": (-0.3, 1.0, -0.2)}
-                U.permitir(prims_lata, ("mama", "mano_izq"))
-            else:  # la mano descansa sobre la tapa y da dos palmaditas
-                pal = 6 * pulso(lt, [3.3, 3.62], 0.07)
-                mano_m = {"palma": tuple(lata_c + np.array([0, -U.LATA_H[1] - 13 - pal, 0], np.float32)), "dir": (-0.15, 0.2, 1.0), "nrm": (0, 1, 0), "forma": "relajada", "polo": (-0.3, 1.0, -0.2)}
-                U.permitir(prims_lata, ("mama", "mano_izq"))
-        pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "giro_cuerpo": -0.15, "mano_izq": mano_m, "mano_der": self.mano_en_encimera(MAMA[0] + 150, "der", 60), "mirar": tuple(pinza_n) if lt < 1.7 else tuple(lata_c)}, MAMA)
+            if lt < 1.66:  # el diente: en los dedos del niño, cae y queda sobre el pañuelo
+                cae = progreso(lt, 1.46, 1.58)
+                d_pos = p_diente + (c_pap + np.array([0.0, -8.0, 0.0], np.float32) - p_diente) * (cae * cae)
+                d_prims = U.diente(d_pos)
+                U.permitir(d_prims, ("hijo", "mano_der"), ("mama", "mano_izq"), ("papel", "objeto"))
+                prims += d_prims
         prims += pm + pb + self.encimera_objetos(t)
-        sombras = [(690, 100, 80, 52, 0.6), (pos_n[0] - 72, 64, 36, 20, 0.35), (pos_n[0] + 72, 64, 36, 20, 0.35 if lt > 2.2 else 0.0), (MAMA[0] + 150, 60, 36, 20, 0.4)]
+        sombras = [(760, 108, 62, 42, 0.6), (pos_n[0] - 72, 64, 36, 20, 0.35), (pos_n[0] + 72, 64, 36, 20, 0.35 if lt > 2.0 else 0.0), (pos_m[0] + 150, 60, 36, 20, 0.4)]
         return self.componer(t, "manana", prims, marco=tarjeta_en_ranura("hijo", 0), sombras=sombras)
 
     # 8 · De noche, mamá sola deja unas monedas y escribe la nota del Ratón de los Dientes (acercamiento lento)
