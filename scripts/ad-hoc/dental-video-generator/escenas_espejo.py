@@ -1395,19 +1395,23 @@ class Renderizador:
         hx, hy, hz = ib["cabeza"]
         R = ib["R"]
         ensena = np.array([hx + 0.95 * R, hy + 0.35 * R, hz + 0.85 * R], np.float32)  # lo enseña en alto, junto a la cara
-        suelta_p = palma_m + np.array([0.0, -46.0, 0.0], np.float32)
+        suelta_p = palma_m + np.array([0.0, -54.0, 0.0], np.float32)
         p_diente = np.array(curva(lt, [(0.0, tuple(ensena)), (0.9, tuple(ensena + np.array([0.0, -4.0, 0.0], np.float32))), (1.42, tuple(suelta_p))]), np.float32)
         p_diente = p_diente + np.array([0.0, 3.0 * math.sin(lt * 3.0) * (1 - progreso(lt, 0.9, 1.1)), 0.0], np.float32)
         gira = suave(progreso(lt, 0.9, 1.4))  # al soltarlo sobre la palma de mamá, los dedos apuntan hacia abajo (la mano queda arriba)
-        dir_n = kf(gira, [(0.0, (0.35, -0.75, 0.5)), (1.0, (0.12, 0.82, 0.55))])
-        polo_n = kf(gira, [(0.0, (0.5, 0.8, -0.3)), (1.0, (0.15, -0.6, -0.6))])  # al soltarlo, el codo sube: su antebrazo baja desde arriba, lejos del de mamá
+        dir_n = kf(gira, [(0.0, (0.35, -0.75, 0.5)), (1.0, (0.15, 0.45, 0.88))])  # al soltarlo, la mano apunta adelante y un poco abajo
+        polo_n = kf(gira, [(0.0, (0.5, 0.8, -0.3)), (1.0, (-0.1, 1.0, -0.55))])  # el codo abajo, pegado a su costado: el antebrazo va hacia delante
         pinza_n = {"pinza": tuple(p_diente), "dir": dir_n, "nrm": (-0.6, 0.1, 0.8), "forma": "pinza", "polo": polo_n}
         reposo_n = self.mano_en_borde(pos_n[0] + 100, "der")
         if lt < 1.5:
             mano_n = pinza_n
         else:  # abre los dedos y vuelve a apoyarse
             pinza_n["mezcla"] = ("pinza", "relajada", progreso(lt, 1.5, 1.6))
-            mano_n = self.transicion(t, quien_n, pose_n, pos_n, "der", pinza_n, reposo_n, suave(progreso(lt, 1.52, 1.86)), escala=esc, desfase=1.7, arco=(-12.0, -66.0, -6.0))
+            medio = {"centro": (pos_n[0] + 92, 1060.0, 72.0), "dir": (0.25, 0.5, 0.83), "nrm": (-0.4, -0.2, 0.9), "forma": "relajada", "polo": (0.8, 0.8, -0.2)}
+            if lt < 1.7:  # primero la retira hacia arriba y hacia sí (lejos de la mano de mamá) y luego la apoya
+                mano_n = self.transicion(t, quien_n, pose_n, pos_n, "der", pinza_n, medio, suave(progreso(lt, 1.52, 1.7)), escala=esc, desfase=1.7, arco=(0.0, -24.0, 0.0))
+            else:
+                mano_n = self.transicion(t, quien_n, pose_n, pos_n, "der", medio, reposo_n, suave(progreso(lt, 1.7, 1.98)), escala=esc, desfase=1.7)
         if lt > 0.95:  # mira hacia la mano de mamá sin agachar del todo la cabeza (se le sigue viendo la cara)
             obj = palma_m if lt < 2.2 else lata_c
             mira_n = (float(obj[0]), float(obj[1]) - 150.0, float(obj[2]) + 320.0)
@@ -1706,10 +1710,10 @@ class Renderizador:
         n_mej = N(np.array([0.74, 0.42, 0.54], np.float32))  # mejilla y mandíbula (bajo el pelo)
         n_mej = np.array([n_mej[0] * math.cos(giro_c) + n_mej[2] * math.sin(giro_c), n_mej[1], -n_mej[0] * math.sin(giro_c) + n_mej[2] * math.cos(giro_c)], np.float32)
         mejilla = {"palma": tuple(np.array([hx, hy, hz], np.float32) + n_mej * np.array([R, R * 1.02, R * 0.96], np.float32) + n_mej * 21.0),
-                   "dir": (-0.15, -0.55, 0.82), "nrm": tuple(-n_mej), "mezcla": ("abierta", "relajada", 0.12), "polo": (0.9, 0.6, -0.3)}
+                   "dir": (-0.15, -0.55, 0.82), "nrm": tuple(-n_mej), "mezcla": ("abierta", "relajada", 0.12), "polo": (0.25, 1.0, 0.25)}  # el codo abajo, junto al cuerpo
         borde = {"pinza": tuple(en_tarjeta(w * 0.1, h - 3, 0.0)), "dir": (-0.35, 0.1, 0.93), "nrm": (0.05, 0.85, -0.5), "mezcla": ("relajada", "pinza", 1.0), "polo": (0.7, 1.0, -0.2)}  # el borde de su lado (sobresale del canto)
         if lt < 1.15:
-            mano_der = self.transicion(t, quien, {}, pos_m, "der", None, mejilla, suave(progreso(lt, 0.0, 0.32)), arco=(20.0, -40.0, 20.0))
+            mano_der = self.transicion(t, quien, {}, pos_m, "der", None, mejilla, suave(progreso(lt, 0.0, 0.32)), arco=(40.0, -30.0, 34.0))
         elif lt < 1.55:  # deja la mejilla y va al borde de la tarjeta (los dedos la pellizcan)
             borde_ida = dict(borde, mezcla=("relajada", "pinza", progreso(lt, 1.42, 1.55)))
             mano_der = self.transicion(t, quien, {}, pos_m, "der", mejilla, borde_ida, suave(progreso(lt, 1.15, 1.5)), arco=(64.0, -20.0, 6.0))
