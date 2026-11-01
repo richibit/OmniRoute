@@ -1649,7 +1649,7 @@ class Renderizador:
     def escena_12(self, t, e):
         lt = t - e["inicio"]
         quien = hijo(15)
-        tel_c = np.array([TEEN[0] + 64, TEEN[1] + 270 + 3 * math.sin(lt * 1.3), 150.0], np.float32)
+        tel_c = np.array([TEEN[0] + 74, TEEN[1] + 196 + 3 * math.sin(lt * 1.3), 176.0], np.float32)  # a la altura del pecho, delante, como se lee el celular
         ib0 = self.info(t, quien, {}, TEEN)
         hacia_ojos = N(np.asarray(ib0["cabeza"], np.float32) - tel_c)
         arriba = np.array([0.0, -1.0, 0.0], np.float32)
@@ -1657,7 +1657,7 @@ class Renderizador:
         lee = suave(progreso(lt, 1.7, 1.9)) * (1 - suave(progreso(lt, 2.45, 2.75)))
         pose = {"cara": "abierta", "mirar": tuple(tel_c)}
         ib = self.info(t, quien, pose, TEEN)
-        cep, mano_izq = self.cepillo_en_boca(t, ib, (-0.82, 0.32, 0.48), U.AZUL, amp=6.0 * (1 - 0.9 * lee), f=2.0, agarre=60.0)
+        cep, mano_izq = self.cepillo_en_boca(t, ib, EJE_SOLO, U.AZUL, amp=6.0 * (1 - 0.9 * lee), f=2.0, agarre=94.0)
         self.sostenido(cep, "hijo", "izq")
         mano_izq["polo"] = (-0.5, 1.0, 0.3)
         pulgar = pulso(lt, [2.05, 2.28], 0.05)
@@ -1665,8 +1665,8 @@ class Renderizador:
         mano_der = {"palma": tuple(tel_c + rot @ np.array([4, 22, 14], np.float32)), "dir": tuple(rot @ np.array([-0.15, -1.0, 0.0], np.float32)),
                     "nrm": tuple(rot @ np.array([0, 0, -1.0], np.float32)), "mezcla": ("relajada", "agarre", 0.45 + 0.15 * pulgar), "polo": (0.7, 1.0, 0.1)}
         pose.update({"mano_der": mano_der, "mano_izq": mano_izq})
-        pt, _ = self.persona(t, quien, pose, TEEN)
         tel = U.telefono(tel_c, rot)
+        pt, _ = self.persona(t, quien, pose, TEEN, evitar=[])
         self.sostenido(tel, "hijo", "der")
         prims = pt + cep + tel + self.encimera_objetos(t, ("amarillo", None))
         return self.componer(t, "manana", prims, marco=tarjeta_en_ranura("hijo", 0))
@@ -1675,7 +1675,8 @@ class Renderizador:
     def escena_13(self, t, e):
         lt = t - e["inicio"]
         quien = mama(45)
-        im0 = self.info(t, quien, {"giro": 0.15}, MAMA_SOLA)
+        pos_m = (MAMA_SOLA[0], MAMA_SOLA[1], -42.0)  # sin pegarse al canto de la encimera
+        im0 = self.info(t, quien, {"giro": 0.15}, pos_m)
         hx, hy, hz = im0["cabeza"]
         R = im0["R"]
         datos = GE.TARJETA_MAMA
@@ -1687,30 +1688,34 @@ class Renderizador:
         w, h = spr.width / 2, spr.height / 2
         _, aw, ah, _ = ranura(1, w, h)
         aw, ah = aw * 1.12, ah * 1.12
-        en_encimera = np.array([640.0, S.ENCIMERA_Y - 1.4, 100.0], np.float32)
-        en_mano = np.array([560.0, 1060.0, 120.0], np.float32)
-        sube = suave(progreso(lt, 1.5, 2.0))
-        c = np.array(curva(lt, [(1.5, tuple(en_encimera)), (1.75, tuple(en_encimera * 0.5 + en_mano * 0.5 + np.array([0, -30, 0], np.float32))), (2.0, tuple(en_mano))]), np.float32) if lt < 2.0 else en_mano
-        # tumbada (texto hacia ella), casi plana sobre su palma, un poco inclinada hacia su cara
-        Rc = J.rot_y(math.pi) @ J.rot_x(math.radians(90) - math.radians(14) * sube)
+        en_encimera = np.array([640.0, S.ENCIMERA_Y - 1.4, 86.0], np.float32)  # el borde de su lado sobresale un poco del canto
+        en_mano = np.array([578.0, 1036.0, 150.0], np.float32)  # delante del pecho: se ve y los brazos quedan libres
+        sube = suave(progreso(lt, 1.55, 2.0))
+        c = np.array(curva(lt, [(1.55, tuple(en_encimera)), (1.78, tuple(en_encimera * 0.5 + en_mano * 0.5 + np.array([0, -40, 0], np.float32))), (2.0, tuple(en_mano))]), np.float32) if lt < 2.0 else en_mano
+        # tumbada (texto hacia ella), casi plana, un poco inclinada hacia su cara
+        Rc = J.rot_y(math.pi) @ J.rot_x(math.radians(90) - math.radians(18) * sube)
         prims = U.tarjeta(c, aw, ah, tex, Rc)
         normal = Rc @ np.array([0, 0, 1.0], np.float32)
 
         def en_tarjeta(px, py, alto=0.0):
             return c + Rc @ np.array([(px / w - 0.5) * aw, (py / h - 0.5) * ah, 1.3 + alto], np.float32)
 
-        # mano derecha (pantalla): mejilla → recoge la tarjeta y la sostiene en la palma
-        if lt < 1.35:
-            pega = suave(progreso(lt, 0.0, 0.3)) * (1 - suave(progreso(lt, 1.15, 1.35)))
-            mejilla = np.array([hx + 0.76 * R, hy + 0.36 * R, hz + 0.66 * R], np.float32)
-            lejos = np.array([hx + 1.5 * R, hy + 3.0 * R, hz + 0.6 * R], np.float32)
-            mano_der = {"palma": tuple(mejilla * pega + lejos * (1 - pega)), "dir": (-0.2, -1.0, 0.15), "nrm": (-0.75, 0.0, -0.65), "forma": "relajada", "polo": (0.6, 1.0, -0.2)}
+        # mano derecha (pantalla): la palma plana en la mejilla → toma la tarjeta por su borde y la sostiene
+        giro_c = 0.15 if lt < 1.4 else 0.0
+        n_mej = N(np.array([0.74, 0.42, 0.54], np.float32))  # mejilla y mandíbula (bajo el pelo)
+        n_mej = np.array([n_mej[0] * math.cos(giro_c) + n_mej[2] * math.sin(giro_c), n_mej[1], -n_mej[0] * math.sin(giro_c) + n_mej[2] * math.cos(giro_c)], np.float32)
+        mejilla = {"palma": tuple(np.array([hx, hy, hz], np.float32) + n_mej * np.array([R, R * 1.02, R * 0.96], np.float32) + n_mej * 21.0),
+                   "dir": (-0.15, -0.55, 0.82), "nrm": tuple(-n_mej), "mezcla": ("abierta", "relajada", 0.12), "polo": (0.9, 0.6, -0.3)}
+        borde = {"pinza": tuple(en_tarjeta(w * 0.1, h - 3, 0.0)), "dir": (-0.35, 0.1, 0.93), "nrm": (0.05, 0.85, -0.5), "mezcla": ("relajada", "pinza", 1.0), "polo": (0.7, 1.0, -0.2)}  # el borde de su lado (sobresale del canto)
+        if lt < 1.15:
+            mano_der = self.transicion(t, quien, {}, pos_m, "der", None, mejilla, suave(progreso(lt, 0.0, 0.32)), arco=(20.0, -40.0, 20.0))
+        elif lt < 1.55:  # deja la mejilla y va al borde de la tarjeta (los dedos la pellizcan)
+            borde_ida = dict(borde, mezcla=("relajada", "pinza", progreso(lt, 1.42, 1.55)))
+            mano_der = self.transicion(t, quien, {}, pos_m, "der", mejilla, borde_ida, suave(progreso(lt, 1.15, 1.5)), arco=(64.0, -20.0, 6.0))
+            if lt > 1.42:
+                self.sostenido(prims, "mama", "der")
         else:
-            bajo = c - normal * 4.0  # la palma, justo debajo de la tarjeta
-            if lt < 1.5:
-                k = suave(progreso(lt, 1.35, 1.5))
-                bajo = np.array([hx + 1.4 * R, hy + 3.2 * R, hz + 0.8 * R], np.float32) * (1 - k) + (en_encimera + np.array([10, -8, 0], np.float32)) * k
-            mano_der = {"palma": tuple(bajo + np.array([22, 0, 0], np.float32)), "dir": (-0.6, 0.0, 0.8), "nrm": tuple(normal), "forma": "relajada", "polo": (0.6, 1.0, -0.2)}
+            mano_der = borde
             self.sostenido(prims, "mama", "der")
         # mano izquierda (pantalla) con el bolígrafo: la punta toca la tarjeta sin atravesarla
         f_t = fuente("manuscrita", 40)
@@ -1740,9 +1745,9 @@ class Renderizador:
         U.permitir(prims, ("lapiz", "objeto"))
         mano_izq = {"pinza": tuple(punta + eje_l * 30), "dir": (0.25, 0.6, 0.76), "nrm": (0.72, 0.1, -0.2), "mezcla": ("lapiz", "lapiz", 1.0), "polo": (-0.35, 0.7, -0.6)}
         cara = "dolor" if lt < 1.4 else ("concentrada" if lt < 3.7 else "neutral")
-        pm, _ = self.persona(t, quien, {"cara": cara, "giro": 0.15 if lt < 1.4 else 0.0, "mano_izq": mano_izq, "mano_der": mano_der, "mirar": None if lt < 1.4 else tuple(c), "inclinacion": 0.06}, MAMA_SOLA)
+        pm, _ = self.persona(t, quien, {"cara": cara, "giro": giro_c, "mano_izq": mano_izq, "mano_der": mano_der, "mirar": None if lt < 1.4 else tuple(c), "inclinacion": 0.06}, pos_m, evitar=prims + lap)
         prims += lap + pm + self.encimera_objetos(t, ("amarillo", None))
-        return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("hijo", 0), sombras=[(640, 100, 70, 50, 0.35 * (1 - sube))])
+        return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("hijo", 0), sombras=[(640, 86, 70, 50, 0.35 * (1 - sube))])
 
     # 14 · «25 AÑOS DESPUÉS» (el baño vacío; la tarjeta vieja de mamá en el marco)
     def escena_14(self, t, e):
