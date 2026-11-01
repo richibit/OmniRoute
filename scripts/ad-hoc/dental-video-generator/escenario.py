@@ -278,14 +278,22 @@ def punta_palanca(abierto=0.0):
     return piv + np.array([0, -math.sin(ang) * 62, -math.cos(ang) * 62], np.float32)
 
 
-def chorro(t, intensidad=1.0):
-    """Chorro de agua (cápsulas finas que ondulan), para renderizar aparte con transparencia."""
+def chorro(t, intensidad=1.0, halo=False):
+    """
+    Chorro de agua (cápsulas que ondulan), para renderizar aparte con transparencia. Con `halo`,
+    el contorno azulado que lo separa del lavabo claro y la salpicadura donde cae.
+    """
     if intensidad <= 0.01:
         return []
     x, y, z = SALIDA_AGUA
     prims = []
-    fondo = ENCIMERA_Y + 80
+    fondo = ENCIMERA_Y + 86
     for k in range(3):
         off = math.sin(t * 31 + k * 2.1) * 1.6
-        prims.append(J.Capsula((x + off + (k - 1) * 3, y + 6, z), (x + off * 2 + (k - 1) * 4, fondo, z - 6), 5.5 - k * 1.2, (214, 232, 255), brillo=1.0))
+        r = 7.0 - k * 1.5 + (2.4 if halo else 0.0)
+        color = (118, 158, 206) if halo else (228, 241, 255)
+        prims.append(J.Capsula((x + off + (k - 1) * 3, y + 6, z), (x + off * 2 + (k - 1) * 4, fondo, z - 6), r, color, brillo=1.0))
+    if halo:  # la salpicadura: un anillo claro que tiembla sobre el fondo del lavabo
+        w = 1.0 + 0.12 * math.sin(t * 23)
+        prims.append(J.Elipsoide((x + 4, fondo + 5, z - 6), (26 * w, 3.0, 17 * w), (204, 226, 250), brillo=0.8))
     return prims

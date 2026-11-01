@@ -698,25 +698,28 @@ class Renderizador:
         return fondo
 
     def dibujar_agua(self, img, t, intensidad, luz, spr, x0, y0, tmap):
-        prims = S.chorro(t, intensidad)
-        if not prims:
-            return
-        sa, ax0, ay0, ta = J.render(prims, luz, self.cam, oclusor=S.oclusor, devolver_t=True)
-        if sa is None:
-            return
-        a = np.asarray(sa, np.float32).copy()
-        if spr is not None:  # lo que está delante del chorro (la mano, el cepillo) lo tapa
-            h, w = ta.shape
-            tm = np.full((h, w), np.inf, np.float32)
-            ox, oy = x0 - ax0, y0 - ay0
-            ys0, xs0 = max(0, oy), max(0, ox)
-            ys1, xs1 = min(h, oy + tmap.shape[0]), min(w, ox + tmap.shape[1])
-            if ys1 > ys0 and xs1 > xs0:
-                tm[ys0:ys1, xs0:xs1] = tmap[ys0 - oy : ys1 - oy, xs0 - ox : xs1 - ox]
-            a[..., 3] *= ta < tm
-        a[..., 3] *= 0.78 * intensidad
-        a[..., :3] = np.clip(a[..., :3] * 1.08 + 12, 0, 255)
-        img.alpha_composite(Image.fromarray(a.astype(np.uint8), "RGBA"), (ax0, ay0))
+        """Chorro de agua translúcido: primero su contorno azulado y la salpicadura, luego el agua clara (lo que está delante lo tapa)."""
+        for halo, alfa in ((True, 0.42), (False, 0.9)):
+            prims = S.chorro(t, intensidad, halo=halo)
+            if not prims:
+                return
+            sa, ax0, ay0, ta = J.render(prims, luz, self.cam, oclusor=S.oclusor, devolver_t=True)
+            if sa is None:
+                continue
+            a = np.asarray(sa, np.float32).copy()
+            if spr is not None:  # lo que está delante del chorro (la mano, el cepillo, el grifo) lo tapa
+                h, w = ta.shape
+                tm = np.full((h, w), np.inf, np.float32)
+                ox, oy = x0 - ax0, y0 - ay0
+                ys0, xs0 = max(0, oy), max(0, ox)
+                ys1, xs1 = min(h, oy + tmap.shape[0]), min(w, ox + tmap.shape[1])
+                if ys1 > ys0 and xs1 > xs0:
+                    tm[ys0:ys1, xs0:xs1] = tmap[ys0 - oy : ys1 - oy, xs0 - ox : xs1 - ox]
+                a[..., 3] *= ta < tm
+            a[..., 3] *= alfa * intensidad
+            if not halo:
+                a[..., :3] = np.clip(a[..., :3] * 1.1 + 14, 0, 255)
+            img.alpha_composite(Image.fromarray(a.astype(np.uint8), "RGBA"), (ax0, ay0))
 
     def sombras_contacto(self, img, sombras):
         """Sombras suaves sobre la encimera bajo lo que se apoya o está muy cerca: (x, z, rx, rz, fuerza)."""
