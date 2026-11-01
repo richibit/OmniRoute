@@ -436,8 +436,9 @@ class Personaje:
             n0 = len(prims)
             if pose.get("piernas", "ocultas") != "ninguna":
                 cad_r = P["cadera"] * R
-                prims.append(Capsula(tf((xb, cin - R * 0.25, zb)), tf((xb, y_cadera + R * 0.15, zb), False), cad_r, self.pantalon, aplanado=P["prof"] * 1.04, brillo=0.03))
-                prims.append(Capsula(tf((xb, cin - R * 0.32, zb)), tf((xb, cin + R * 0.05, zb)), pecho_r * 0.97, self.ropa, aplanado=P["prof"] * 1.06, brillo=0.04))  # bajo del suéter
+                corto = (P["cintura_y"] - P["hombro_y"]) < 1.2  # bebés: la barriga no sube hasta las axilas
+                prims.append(Capsula(tf((xb, cin - R * (0.0 if corto else 0.25), zb)), tf((xb, y_cadera + R * 0.15, zb), False), cad_r * (0.9 if corto else 1.0), self.pantalon, aplanado=P["prof"] * 1.04, brillo=0.03))
+                prims.append(Capsula(tf((xb, cin - R * (0.05 if corto else 0.32), zb)), tf((xb, cin + R * 0.05, zb)), pecho_r * (0.9 if corto else 0.97), self.ropa, aplanado=P["prof"] * 1.06, brillo=0.04))  # bajo del suéter
             self._etiquetar(prims, n0, "cadera")
             self._piernas(prims, pose, xb, zb, y_cadera, R, tf)
         info = {"cabeza": (hx, hy, hz), "R": R, "giro": giro, "cabeceo": cabeceo, "manos": {}, "hombros": {}, "puntos": {}, "error": {}, "dueno": self.nombre}

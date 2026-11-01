@@ -26,6 +26,17 @@ cierre oscuro con un dato. **Sin voz en off y sin marca de agua durante el video
 | Salto de tiempo con texto grande a la izquierda | «25 AÑOS / DESPUÉS» |
 | Cierre: último cuadro desenfocado y oscuro + título + dato con fuente + pregunta en dorado; logo al final | Igual (SEOP y AEP) y logo de Instagram con el @ de `config.py` |
 | Sonido: sin voz, música suave, efectos, golpe con el logo y silencio final, −14 LUFS | Caja de música + piano + fondo cálido (`musica.py`), 1 s de silencio antes del salto y la música sube ahí |
+| Nada atraviesa nada | `revision_choques.py` revisa cada fotograma con distancias con signo: brazos contra cuellos, cabezas y cuerpos ajenos, manos dentro del propio cuerpo, objetos contra personas y contra otros objetos, la encimera (fuera del lavabo) y la pared del espejo. Además cada codo se coloca solo (`personajes.Personaje._mejor_polo`): prueba girar el codo alrededor del eje hombro→muñeca y se queda con la postura que no atraviesa a la otra persona, la encimera, los objetos ni el propio cuerpo |
+| Movimientos continuos | `Renderizador.transicion()` pasa de un agarre a otro (palma, yemas, pinza, agarre de mango) sin saltos, con un arco opcional para que la mano suba antes de avanzar |
+| Grifo realista | Monomando detrás del lavabo con la palanca encima apuntando a quien lo usa; el caño gira un poco a un lado para que el chorro caiga dentro del lavabo y se vea desde el espejo |
+
+**Revisar choques** (la salida enumera escena, profundidad en px, tramo y las dos piezas; termina con 0
+cuando no hay ninguno):
+
+```bash
+python revision_choques.py                         # todo el video, cada 2 fotogramas
+python revision_choques.py --desde 44 --hasta 48 --paso 1
+```
 
 **Ejecutar:**
 
