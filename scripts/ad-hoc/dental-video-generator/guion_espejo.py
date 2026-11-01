@@ -38,7 +38,7 @@ ESCENAS = [
      "sonidos": [("cepillado_suave", 0.5, 0.5)]},
     {"id": 4, "inicio": 11.0, "fin": 15.0, "luz": "noche", "subtitulo": "a veces solo mojabas el cepillo.",
      "contador": (ROTULO_VECES, 2434, 2434, [("TIENES 4 AÑOS · 20 DIENTES", False)]),
-     "sonidos": [("vaso", 0.7, 0.5), ("agua", 0.5, 0.7), ("vaso", 2.95, 0.8)]},
+     "sonidos": [("agua", 0.52, 0.7), ("vaso", 0.95, 0.5), ("vaso", 2.88, 0.8)]},
     {"id": 5, "inicio": 15.0, "fin": 19.0, "luz": "noche", "subtitulo": "ella sabía. te los cepillaba de todos modos.",
      "contador": (ROTULO_VECES, 2434, 2434, [("TIENES 4 AÑOS · 20 DIENTES", False)]),
      "sonidos": [("pasos", 0.0, 0.5), ("vaso", 1.75, 0.5), ("cepillado_suave", 3.3, 0.6)]},

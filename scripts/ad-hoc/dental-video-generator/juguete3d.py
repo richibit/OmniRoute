@@ -330,13 +330,14 @@ class Caja(Primitiva):
 class Cilindro(Primitiva):
     """Cilindro de radio r y semialtura hy sobre el eje y local (`rot`), con tapas planas; `abierto` oscurece la tapa de arriba (−y)."""
 
-    def __init__(self, c, r, hy, color, rot=None, brillo=0.08, abierto=False, color_interior=None):
+    def __init__(self, c, r, hy, color, rot=None, brillo=0.08, abierto=False, color_interior=None, textura_tapa=None):
         super().__init__(color, brillo)
         self.c = np.asarray(c, np.float32)
         self.r, self.hy = float(r), float(hy)
         self.rot = np.asarray(rot, np.float32) if rot is not None else np.eye(3, dtype=np.float32)
         self.abierto = abierto
         self.color_interior = np.asarray(color_interior if color_interior is not None else (0, 0, 0), np.float32) / 255.0
+        self.textura_tapa = textura_tapa  # dibujo en la tapa −y (x local → u, z local → v)
 
     def aabb(self):
         h = np.array([self.r, self.hy, self.r], np.float32)
@@ -372,6 +373,12 @@ class Cilindro(Primitiva):
         nly = np.where(tapa == 0, 0.0, tapa.astype(np.float32) * self.r)
         n = _apilar_normal(*_a_mundo(R, nlx, nly, nlz))
         albedo = None
+        if self.textura_tapa is not None:
+            albedo = np.broadcast_to(self.color, np.shape(dx) + (3,)).copy()
+            m = ok & (tapa == -1)
+            if m.any():
+                tx = _muestrear(self.textura_tapa, (px[m] / self.r + 1) / 2, (pz[m] / self.r + 1) / 2)
+                albedo[m] = albedo[m] * (1 - tx[:, 3:4]) + tx[:, :3] * tx[:, 3:4]
         if self.abierto:
             albedo = np.broadcast_to(self.color, np.shape(dx) + (3,)).copy()
             m = ok & (tapa == -1)

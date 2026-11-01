@@ -28,6 +28,24 @@ LARGO_CEPILLO = 172.0
 AGARRE_CEPILLO = 118.0  # distancia de la cabeza al centro del puño
 
 
+def etiqueta(prims, dueno, grupo="objeto", ignorar=()):
+    """Marca un objeto para la revisión de choques: dueño, parte y con quién puede tocarse (p. ej. la mano que lo agarra)."""
+    for p in prims:
+        p.dueno = dueno
+        p.grupo = getattr(p, "grupo_obj", grupo)
+        p.es_objeto = True
+        p.ignorar = set(getattr(p, "ignorar", set())) | set(ignorar)
+    return prims
+
+
+def permitir(prims, *pares, solo=None):
+    """Añade contactos permitidos (dueño, prefijo de parte) a las primitivas (o solo a las de la parte `solo`)."""
+    for p in prims:
+        if solo is None or getattr(p, "grupo", "") == solo:
+            p.ignorar = set(getattr(p, "ignorar", set())) | set(pares)
+    return prims
+
+
 # ---------------------------------------------------------------------------
 # Cepillo de dientes
 # ---------------------------------------------------------------------------
@@ -52,18 +70,26 @@ def cepillo(cabeza, eje, cerdas, color, pasta=0.0, agarre=AGARRE_CEPILLO):
     if pasta > 0.01:
         r = 3 + 7 * pasta
         prims.append(J.Elipsoide(tuple(c + s * (11 + r * 0.4) + e * 2), (r * 0.8, r * 0.75, r * 1.3), (250, 252, 252), rot=rot, brillo=0.3))
-    return prims, c + e * agarre
+    for i, p in enumerate(prims):
+        p.grupo_obj = "mango" if i in (3, 4) else "cabezal"
+    return etiqueta(prims, "cepillo"), c + e * agarre
 
 
 def pose_en_vaso(vaso, k):
-    """(cabeza, eje, cerdas) del cepillo `k` metido en el vaso (cabeza arriba, mango apoyado en el borde)."""
+    """
+    (cabeza, eje, cerdas) del cepillo `k` metido en el vaso: el final del mango descansa en el
+    fondo, a un lado, y el mango se apoya por dentro en el borde del lado contrario (nunca lo atraviesa).
+    """
     x, y_borde, z = vaso
-    inclinacion = (-0.36, 0.30, 0.05)[k % 3]
-    fondo = np.array([x + (k - 1) * 9, y_borde + 80, z + (k - 1) * 6], np.float32)
-    e = J._norm((-inclinacion, 1.0, -0.12 + 0.1 * k))
-    cabeza = fondo - e * (LARGO_CEPILLO - 4)
-    cerdas = J._norm((0.2 * (1 if inclinacion > 0 else -1), 0, 1))
-    return cabeza, e, cerdas
+    radio_int = RADIO_VASO - 5.0
+    phi = math.radians((155.0, 25.0, 268.0)[k % 3])  # 0 se inclina a la derecha, 1 hacia el niño (izquierda), 2 hacia el espejo
+    u_lado = np.array([math.cos(phi), 0.0, math.sin(phi)], np.float32)
+    fondo = np.array([x, ENCIMERA_Y - 14.0, z], np.float32) + u_lado * 15.0
+    borde = np.array([x, y_borde + 3.0, z], np.float32) - u_lado * (radio_int - 7.5 - 1.5)
+    arriba = J._norm(borde - fondo)
+    cabeza = fondo + arriba * (LARGO_CEPILLO - 2.0)
+    cerdas = J._norm(np.cross(arriba, np.array([0.0, 1.0, 0.0], np.float32)) + np.array([0, 0, 0.6], np.float32))
+    return cabeza, -arriba, cerdas
 
 
 def cepillo_en_vaso(vaso, k, color):
@@ -76,15 +102,16 @@ def cepillo_en_vaso(vaso, k, color):
 # Encimera: vaso, pasta, cajita de lata
 # ---------------------------------------------------------------------------
 VASO = (868.0, ENCIMERA_Y - 112.0, 178.0)  # x, y del borde, z
+RADIO_VASO = 40.0
 
 
 def vaso():
     x, yb, z = VASO
     hy = (ENCIMERA_Y - yb) / 2
-    return [J.Cilindro((x, yb + hy, z), 40, hy, (150, 210, 196), brillo=0.35, abierto=True, color_interior=(70, 104, 98))]
+    return etiqueta([J.Cilindro((x, yb + hy, z), RADIO_VASO, hy, (150, 210, 196), brillo=0.35, abierto=True, color_interior=(70, 104, 98))], "vaso")
 
 
-def tubo_pasta(pos=(215.0, 160.0), giro=0.12, en_mano=None, eje_mano=None):
+def tubo_pasta(pos=(172.0, 112.0), giro=0.2, en_mano=None, eje_mano=None):
     """Tubo de pasta tumbado en la encimera (x, z) o en la mano (`en_mano` = centro, `eje_mano` hacia la boquilla)."""
     if en_mano is None:
         x, z = pos
@@ -100,7 +127,7 @@ def tubo_pasta(pos=(215.0, 160.0), giro=0.12, en_mano=None, eje_mano=None):
         J.Caja(tuple(a - e * 8), (21, 3.0, 7), (226, 228, 230), rot=_rot_eje(e), bisel=0.4),  # pliegue del final
         J.Cilindro(tuple(b + e * 13), 11, 12, (210, 60, 66), rot=_rot_eje_y(e), brillo=0.4),
     ]
-    return prims, b + e * 25  # boquilla
+    return etiqueta(prims, "pasta"), b + e * 25  # boquilla
 
 
 def _rot_eje(e):
@@ -192,7 +219,7 @@ def lata(abierta=0.0, centro=None, rot=None, llena=True):
     Rt = R @ J.rot_x(ang)
     centro_tapa = bis + Rt @ np.array([0, -5, hz + 2], np.float32)
     prims.append(J.Caja(tuple(centro_tapa), (hx + 3, 6, hz + 2), (204, 88, 78), rot=Rt, bisel=0.35, brillo=0.5))
-    return prims, bis + Rt @ np.array([0, -10, 2 * hz], np.float32)  # borde delantero de la tapa (para empujarla)
+    return etiqueta(prims, "lata"), bis + Rt @ np.array([0, -10, 2 * hz], np.float32)  # borde delantero de la tapa (para empujarla)
 
 
 # ---------------------------------------------------------------------------
@@ -205,13 +232,13 @@ def textura(sprite):
 
 def tarjeta(centro, ancho, alto, tex, rot=None, color=(250, 246, 236)):
     """Tarjeta fina con su texto en la cara +z (de frente a la cámara si `rot` es la identidad)."""
-    return [J.Caja(tuple(centro), (ancho / 2, alto / 2, 1.3), color, rot=rot, bisel=0.06, brillo=0.04, texturas={"+z": tex})]
+    return etiqueta([J.Caja(tuple(centro), (ancho / 2, alto / 2, 1.3), color, rot=rot, bisel=0.06, brillo=0.04, texturas={"+z": tex})], "tarjeta")
 
 
 def nota_en_encimera(centro, ancho, fondo, tex, giro=0.0):
     """Nota tumbada sobre la encimera; el texto se lee desde el espejo."""
     R = J.rot_y(giro)
-    return [J.Caja(tuple(centro), (ancho / 2, 0.9, fondo / 2), (255, 250, 222), rot=R, bisel=0.05, brillo=0.03, texturas={"-y": tex})]
+    return etiqueta([J.Caja(tuple(centro), (ancho / 2, 0.9, fondo / 2), (255, 250, 222), rot=R, bisel=0.05, brillo=0.03, texturas={"-y": tex})], "nota")
 
 
 def papelito(centro, k_bola=0.0, rot=None):
@@ -219,9 +246,9 @@ def papelito(centro, k_bola=0.0, rot=None):
     c = np.asarray(centro, np.float32)
     if k_bola < 0.5:
         lado = 34 * (1 - k_bola * 0.9)
-        return [J.Caja(tuple(c), (lado, 1.2 + 10 * k_bola, lado * 0.9), (246, 244, 236), rot=rot, bisel=0.3, brillo=0.02)]
+        return etiqueta([J.Caja(tuple(c), (lado, 1.2 + 10 * k_bola, lado * 0.9), (246, 244, 236), rot=rot, bisel=0.3, brillo=0.02)], "papel")
     r = 13 + 8 * (1 - k_bola)
-    return [J.Elipsoide(tuple(c), (r, r * 0.92, r * 0.96), (246, 244, 236), giro=20, brillo=0.02)]
+    return etiqueta([J.Elipsoide(tuple(c), (r, r * 0.92, r * 0.96), (246, 244, 236), giro=20, brillo=0.02)], "papel")
 
 
 # ---------------------------------------------------------------------------
@@ -231,20 +258,20 @@ def lapiz(punta, eje, color=(70, 90, 170)):
     """Bolígrafo: `punta` es la punta que toca el papel y `eje` va hacia el otro extremo."""
     p = np.asarray(punta, np.float32)
     e = J._norm(eje)
-    return [
-        J.Capsula(tuple(p + e * 3), tuple(p + e * 12), 2.4, (60, 60, 66), brillo=0.4),
+    return etiqueta([
+        J.Capsula(tuple(p + e * 2.4), tuple(p + e * 12), 2.4, (60, 60, 66), brillo=0.4),
         J.Capsula(tuple(p + e * 12), tuple(p + e * 130), 4.6, color, brillo=0.35),
         J.Capsula(tuple(p + e * 112), tuple(p + e * 132), 4.9, (232, 232, 236), brillo=0.4),
-    ]
+    ], "lapiz")
 
 
 def moneda(centro, inclinacion=0.0):
     R = J.rot_x(inclinacion)
-    return [J.Cilindro(tuple(centro), 12.5, 1.8, (226, 184, 76), rot=R, brillo=0.9)]
+    return etiqueta([J.Cilindro(tuple(centro), 12.5, 1.8, (226, 184, 76), rot=R, brillo=0.9)], "moneda")
 
 
 def diente(centro):
-    return [J.Elipsoide(tuple(centro), (6.5, 8, 6), (252, 250, 242), brillo=0.5)]
+    return etiqueta([J.Elipsoide(tuple(centro), (6.5, 8, 6), (252, 250, 242), brillo=0.5)], "diente")
 
 
 def telefono(centro, rot):
@@ -253,4 +280,4 @@ def telefono(centro, rot):
     R = np.asarray(rot, np.float32)
     prims = [J.Caja(tuple(c), (34, 70, 4.5), (40, 42, 50), rot=R, bisel=0.45, brillo=0.5)]
     prims.append(J.Caja(tuple(c + R @ np.array([-17, -50, 4.5], np.float32)), (9, 12, 1.6), (24, 24, 28), rot=R, bisel=0.5, brillo=0.7))
-    return prims
+    return etiqueta(prims, "telefono")

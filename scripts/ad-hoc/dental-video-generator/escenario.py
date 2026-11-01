@@ -27,9 +27,8 @@ ENCIMERA_Z0 = 40.0  # borde delantero de la encimera (lado de quien se cepilla)
 ESPEJO_Z = 480.0  # pared del espejo (fondo de la encimera)
 PARED_Z = -800.0  # pared del fondo, con la puerta
 LAVABO = {"x": 548.0, "z": 262.0, "rx": 190.0, "rz": 102.0, "hondo": 100.0}
-GRIFO = {"x": 684.0, "z_base": 480.0, "alto": 128.0, "z_caño": 362.0, "x_caño": 684.0}
-PALANCA = (790.0, 205.0)  # mando del agua sobre la encimera (x, z), al alcance de un niño
-SALIDA_AGUA = (GRIFO["x_caño"], ENCIMERA_Y - 98.0, GRIFO["z_caño"])  # boca del caño
+GRIFO = {"x": 548.0, "z": 400.0, "alto": 126.0, "r": 23.0}  # monomando justo detrás del lavabo, al centro
+SALIDA_AGUA = (606.0, ENCIMERA_Y - 104.0, 288.0)  # boca del caño (girado un poco a la derecha): el agua cae dentro del lavabo y se ve junto al grifo
 
 # Pintura de la pared del fondo (en píxeles de pantalla)
 PISO = CAM.cy + (SUELO - CAM.cy) * CAM.D / (CAM.D - PARED_Z)  # unión suelo-pared al fondo (plano de imagen sin zoom)
@@ -243,47 +242,40 @@ def capa_encimera(nombre, ss=2):
 # ---------------------------------------------------------------------------
 # Grifo (cromado, 3D: puede tapar una mano que pasa por detrás)
 # ---------------------------------------------------------------------------
-def grifo(abierto=0.0, partes="todo"):
-    """Caño cromado que sale de la pared del espejo y mando del agua sobre la encimera (`abierto` 0–1 lo levanta)."""
+def grifo(abierto=0.0):
+    """Grifo monomando cromado detrás del lavabo: cuerpo, caño hacia el lavabo y palanca arriba (`abierto` 0–1 la levanta)."""
     g = GRIFO
-    x, zb = g["x"], g["z_base"]
+    x, z, h, r = g["x"], g["z"], g["alto"], g["r"]
     yb = ENCIMERA_Y
+    sx, sy, sz = SALIDA_AGUA
     cromo = (200, 206, 216)
-    sx, sz = SALIDA_AGUA[0], SALIDA_AGUA[2]
-    # caño que sale de la pared del espejo (bajo el espejo) hacia quien se cepilla
-    yc = yb - g["alto"]
+    piv = np.array([x, yb - h - 8, z + 4], np.float32)
+    punta = punta_palanca(abierto)
+    largo = math.hypot(sx - x, sz - z)
+    ux, uz = (sx - x) / largo, (sz - z) / largo  # dirección del caño en planta
     prims = [
-        J.Cilindro((x, yc, zb - 6), 30, 6, cromo, rot=J.rot_x(math.pi / 2), brillo=1.0),  # embellecedor en la pared
-        J.Capsula((x, yc, zb - 8), (sx, yc + 4, sz + 22), 16, cromo, brillo=1.0),
-        J.Capsula((sx, yc + 4, sz + 22), (sx, SALIDA_AGUA[1] - 10, sz), 15, cromo, brillo=1.0),
-        J.Cilindro((sx, SALIDA_AGUA[1] - 7, sz), 15, 7, cromo, brillo=1.0),  # boca del caño (aireador)
-        J.Cilindro((sx, SALIDA_AGUA[1] - 0.5, sz), 10, 1.2, (96, 100, 108), brillo=0.6),
+        J.Cilindro((x, yb - 4, z), r + 12, 4, cromo, brillo=1.0),  # embellecedor sobre la encimera
+        J.Cilindro((x, yb - h / 2, z), r, h / 2, cromo, brillo=1.0),  # cuerpo
+        J.Elipsoide((x, yb - h, z), (r, 8, r), cromo, brillo=1.0),
+        J.Capsula((x + ux * r * 0.6, yb - h + 30, z + uz * r * 0.6), (sx - ux * 16, yb - h + 27, sz - uz * 16), 13, cromo, brillo=1.0),  # caño
+        J.Capsula((sx - ux * 16, yb - h + 27, sz - uz * 16), (sx, sy - 10, sz), 12, cromo, brillo=1.0),
+        J.Cilindro((sx, sy - 5, sz), 13.5, 5, cromo, brillo=1.0),  # aireador
+        J.Cilindro((sx, sy - 0.5, sz), 9, 1.0, (96, 100, 108), brillo=0.6),
+        J.Elipsoide(tuple(piv), (15, 10, 15), cromo, brillo=1.0),  # rótula de la palanca
+        J.Capsula(tuple(piv), tuple(punta), 8, cromo, brillo=1.0),  # palanca (apunta hacia quien la usa)
     ]
-    if partes == "palanca":
-        prims = []
-    elif partes == "caño":
-        for p in prims:
-            p.metal = True
-        return prims
-    px, pz = PALANCA
-    ang = 0.15 + 0.85 * abierto
-    base = np.array([px, yb - 30, pz], np.float32)
-    punta = base + np.array([0, -math.sin(ang) * 40, -math.cos(ang) * 40], np.float32)
-    prims += [  # llave de perilla con palanquita
-        J.Cilindro((px, yb - 15, pz), 26, 15, cromo, brillo=1.0),
-        J.Elipsoide(tuple(base), (22, 10, 22), cromo, brillo=1.0),
-        J.Capsula(tuple(base), tuple(punta), 9, cromo, brillo=1.0),
-    ]
-    for p in prims:
+    for i, p in enumerate(prims):
         p.metal = True
+        p.dueno, p.grupo, p.es_objeto = "grifo", ("palanca" if i >= len(prims) - 2 else "objeto"), True
     return prims
 
 
 def punta_palanca(abierto=0.0):
-    """Extremo del mando del agua (donde lo empuja un dedo)."""
-    px, pz = PALANCA
-    ang = 0.15 + 0.85 * abierto
-    return np.array([px, ENCIMERA_Y - 30 - math.sin(ang) * 40, pz - math.cos(ang) * 40], np.float32)
+    """Extremo de la palanca del grifo (donde la empuja un dedo)."""
+    g = GRIFO
+    ang = 0.32 + 0.5 * abierto  # cerrada apenas levantada (deja sitio a los dedos sobre el caño); abierta, arriba
+    piv = np.array([g["x"], ENCIMERA_Y - g["alto"] - 8, g["z"] + 4], np.float32)
+    return piv + np.array([0, -math.sin(ang) * 62, -math.cos(ang) * 62], np.float32)
 
 
 def chorro(t, intensidad=1.0):

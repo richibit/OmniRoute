@@ -17,7 +17,7 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw
 
-from juguete3d import Capsula, Elipsoide, _norm
+from juguete3d import Capsula, Cilindro, Elipsoide, _norm
 
 PIEL = (238, 190, 152)
 
@@ -136,6 +136,37 @@ def textura_cara(expresion="neutral", hueco=False, rubor=0.5, arrugas=False):
     return np.asarray(img, np.float32) / 255.0
 
 
+@functools.lru_cache(maxsize=2)
+def textura_pegatina():
+    """Pegatina «paciente valiente» del dentista: borde dorado ondulado, estrellitas y un diente sonriente."""
+    S = 512
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    c = S / 2
+    puntos = []
+    for i in range(72):  # borde ondulado
+        a = 2 * math.pi * i / 72
+        r = S * 0.49 - (S * 0.025 if i % 2 else 0)
+        puntos.append((c + r * math.cos(a), c + r * math.sin(a)))
+    d.polygon(puntos, fill=(244, 196, 72, 255))
+    d.ellipse([S * 0.08, S * 0.08, S * 0.92, S * 0.92], fill=(255, 255, 252, 255))
+    d.ellipse([S * 0.13, S * 0.13, S * 0.87, S * 0.87], outline=(90, 160, 220, 255), width=10)
+    diente = [(0.34, 0.30), (0.50, 0.26), (0.66, 0.30), (0.70, 0.46), (0.64, 0.60), (0.61, 0.76), (0.55, 0.77), (0.50, 0.62),
+              (0.45, 0.77), (0.39, 0.76), (0.36, 0.60), (0.30, 0.46)]
+    d.polygon([(x * S, y * S) for x, y in diente], fill=(255, 255, 255, 255), outline=(70, 140, 205, 255), width=10)
+    for ex in (0.43, 0.57):  # ojitos y sonrisa
+        d.ellipse([ex * S - 11, 0.42 * S - 11, ex * S + 11, 0.42 * S + 11], fill=(40, 60, 90, 255))
+    d.arc([0.42 * S, 0.43 * S, 0.58 * S, 0.55 * S], 20, 160, fill=(40, 60, 90, 255), width=8)
+    for x, y in ((0.22, 0.30), (0.78, 0.30), (0.22, 0.70), (0.78, 0.70)):  # estrellitas
+        pts = []
+        for i in range(10):
+            a = -math.pi / 2 + i * math.pi / 5
+            r = S * (0.055 if i % 2 == 0 else 0.022)
+            pts.append((x * S + r * math.cos(a), y * S + r * math.sin(a)))
+        d.polygon(pts, fill=(244, 186, 52, 255))
+    return np.asarray(img.resize((256, 256), Image.LANCZOS), np.float32) / 255.0
+
+
 # ---------------------------------------------------------------------------
 # Cinemática inversa de dos huesos
 # ---------------------------------------------------------------------------
@@ -160,10 +191,21 @@ def ik(hombro, objetivo, l1, l2, polo):
 
 
 # ---------------------------------------------------------------------------
-# Manos
+# Manos (paramétricas: cada forma sale de la curvatura de cada dedo y del pulgar)
 # ---------------------------------------------------------------------------
 DEDOS_OFFS = (0.15, 0.05, -0.06, -0.16)  # índice, medio, anular, meñique (a lo ancho de la palma)
 DEDOS_LARGO = (0.42, 0.46, 0.42, 0.34)
+
+# curvatura de índice, medio, anular y meñique (0 recto, 1 cerrado), abanico y pulgar (abierto, oposición)
+FORMAS = {
+    "abierta": ((0.06, 0.05, 0.05, 0.06), 0.04, 0.80, 0.0),
+    "relajada": ((0.40, 0.46, 0.52, 0.58), 0.02, 0.45, 0.0),
+    "puño": ((1.0, 1.0, 1.0, 1.0), 0.0, 0.0, 0.0),
+    "agarre": ((0.86, 0.90, 0.93, 0.96), 0.0, 0.05, 0.0),  # alrededor de un mango
+    "pinza": ((0.52, 0.86, 0.92, 0.96), 0.0, 0.30, 1.0),  # pulgar contra la yema del índice
+    "lapiz": ((0.46, 0.60, 0.92, 0.96), 0.0, 0.30, 1.0),
+    "senalar": ((0.0, 0.95, 0.97, 0.98), 0.0, 0.10, 0.0),
+}
 
 
 def marco_mano(d, nrm, sx):
@@ -175,68 +217,114 @@ def marco_mano(d, nrm, sx):
     return d, nrm, lat
 
 
-def construir_mano(prims, muneca, d, nrm, sx, L, piel, forma="relajada", dedos=None):
-    """
-    Añade la mano a `prims` y devuelve sus puntos útiles (centro, agarre, pinza, palma).
-    forma: relajada | puño | pinza | abierta | contar (dedos = extensión 0–1 de índice,
-    medio, anular, meñique y pulgar).
-    """
-    d, nrm, lat = marco_mano(d, nrm, sx)
-    W = np.asarray(muneca, np.float32)
+def cuenta_dedos(n):
+    """Extensión de cada dedo (índice, medio, anular, meñique, pulgar) para mostrar `n` (fraccionario: se estiran poco a poco)."""
+    return tuple(float(np.clip(n - k, 0, 1)) for k in range(5))
+
+
+def params_forma(forma="relajada", dedos=None):
+    """Parámetros (curvaturas, abanico, pulgar abierto, oposición) de una forma con nombre o de `contar`."""
+    if isinstance(forma, tuple):
+        return forma
+    if forma == "contar":
+        ext = list(dedos or (0, 0, 0, 0, 0)) + [0] * 5
+        return (tuple(1.0 - float(np.clip(e, 0, 1)) for e in ext[:4]), 0.45, float(np.clip(ext[4], 0, 1)), 0.0, tuple(float(np.clip(e, 0, 1)) for e in ext[:4]))
+    return FORMAS.get(forma, FORMAS["relajada"])
+
+
+def mezclar_formas(a, b, k, dedos_a=None, dedos_b=None):
+    """Transición suave entre dos formas de mano (k de 0 a 1)."""
+    pa, pb = params_forma(a, dedos_a), params_forma(b, dedos_b)
+    k = float(np.clip(k, 0, 1))
+    curv = tuple(x + (y - x) * k for x, y in zip(pa[0], pb[0]))
+    return (curv, pa[1] + (pb[1] - pa[1]) * k, pa[2] + (pb[2] - pa[2]) * k, pa[3] + (pb[3] - pa[3]) * k)
+
+
+def _geometria_mano(W, d, nrm, lat, L, params):
+    """Segmentos de la mano para unos parámetros: palma, dedos (2 falanges) y pulgar, más puntos útiles."""
+    curv, abanico, p_abierto, p_opos = params[:4]
+    abanico_dedo = params[4] if len(params) > 4 else (abanico,) * 4
 
     def P(a, b, c):
         return W + d * (a * L) + lat * (b * L) + nrm * (c * L)
 
+    dedos = []
+    puntas = []
+    for k in range(4):
+        c = float(np.clip(curv[k], 0, 1))
+        base = P(0.53, DEDOS_OFFS[k], 0.0)
+        ab = DEDOS_OFFS[k] * (abanico_dedo[k] if len(params) > 4 else abanico) * (1 - c)
+        a1 = c * math.radians(85)
+        a2 = c * math.radians(110)
+        l1, l2 = DEDOS_LARGO[k] * 0.55 * L, DEDOS_LARGO[k] * 0.45 * L
+        u1 = _norm(d * math.cos(a1) + nrm * math.sin(a1) + lat * ab)
+        p1 = base + u1 * l1
+        u2 = _norm(d * math.cos(a1 + a2) + nrm * math.sin(a1 + a2) + lat * ab)
+        p2 = p1 + u2 * l2
+        dedos.append((base, p1, p2))
+        puntas.append(p2)
+    base_p = P(0.13, 0.21, 0.02)
+    doblado = base_p + (d * 0.26 - lat * 0.07 + nrm * 0.19) * L
+    abierto = base_p + (d * 0.24 + lat * 0.30) * L
+    tip = doblado + (abierto - doblado) * p_abierto
+    if p_opos > 0:
+        opuesto = puntas[0] + lat * (0.02 * L) + nrm * (0.01 * L)
+        tip = tip + (opuesto - tip) * p_opos
+    junta = base_p + (tip - base_p) * 0.5 + nrm * (0.04 * L) + lat * (0.03 * L)
+    puntos = {
+        "centro": P(0.4, 0.0, 0.05),
+        "agarre": P(0.45, -0.01, 0.13),
+        "palma": P(0.42, 0.0, 0.12),
+        "yemas": puntas[1],
+        "indice": puntas[0],
+        "pulgar": tip,
+        "pinza": (puntas[0] + tip) / 2,
+    }
+    return dedos, (base_p, junta, tip), puntos
+
+
+@functools.lru_cache(maxsize=4096)
+def _desfase_punto(params, sx, clave):
+    """Coordenadas (a lo largo de d, lat, nrm, en unidades de L) de un punto de la mano para unos parámetros."""
+    d, nrm, lat = marco_mano((0, 1, 0), (0, 0, 1), sx)
+    _, _, pts = _geometria_mano(np.zeros(3, np.float32), d, nrm, lat, 1.0, params)
+    q = pts[clave]
+    return (float(q @ d), float(q @ lat), float(q @ nrm))
+
+
+def _redondear(params):
+    curv, ab, pa, po = params[:4]
+    r = lambda v: round(float(v), 2)  # noqa: E731
+    base = (tuple(r(c) for c in curv), r(ab), r(pa), r(po))
+    if len(params) > 4:
+        base = base + (tuple(r(c) for c in params[4]),)
+    return base
+
+
+def muneca_para(punto, clave, d, nrm, sx, L, params):
+    """Muñeca necesaria para que el punto `clave` de la mano (agarre, pinza, palma…) quede en `punto`."""
+    dd, nn, ll = marco_mano(d, nrm, sx)
+    a, b, c = _desfase_punto(_redondear(params), sx, clave)
+    return np.asarray(punto, np.float32) - (dd * a + ll * b + nn * c) * L, dd, nn
+
+
+def construir_mano(prims, muneca, d, nrm, sx, L, piel, forma="relajada", dedos=None):
+    """Añade la mano a `prims` (palma, dedos con dos falanges y pulgar) y devuelve sus puntos útiles."""
+    params = params_forma(forma, dedos)
+    d, nrm, lat = marco_mano(d, nrm, sx)
+    W = np.asarray(muneca, np.float32)
     rot = np.stack([lat, d, nrm], 1)
-    puntos = {"centro": P(0.4, 0.0, 0.05), "marco": (d, nrm, lat)}
-    if forma == "puño":
-        prims.append(Elipsoide(P(0.30, 0.0, 0.05), (0.25 * L, 0.27 * L, 0.17 * L), piel, rot=rot))
-        prims.append(Capsula(P(0.47, -0.16, 0.11), P(0.47, 0.12, 0.11), 0.115 * L, piel))  # dedos doblados
-        prims.append(Capsula(P(0.14, 0.21, 0.03), P(0.40, 0.15, 0.21), 0.078 * L, piel))  # pulgar sobre los dedos
-        puntos["agarre"] = P(0.38, 0.0, 0.11)
-    elif forma == "pinza":
-        prims.append(Elipsoide(P(0.30, 0.0, 0.04), (0.24 * L, 0.27 * L, 0.15 * L), piel, rot=rot))
-        prims.append(Capsula(P(0.47, -0.17, 0.10), P(0.47, 0.01, 0.10), 0.105 * L, piel))  # medio, anular y meñique doblados
-        prims.append(Capsula(P(0.52, 0.12, 0.02), P(0.70, 0.15, 0.11), 0.07 * L, piel))  # índice
-        prims.append(Capsula(P(0.14, 0.21, 0.03), P(0.62, 0.21, 0.13), 0.078 * L, piel))  # pulgar que se junta con el índice
-        puntos["pinza"] = P(0.70, 0.19, 0.15)
-    elif forma == "abierta":
-        prims.append(Elipsoide(P(0.30, 0.0, 0.0), (0.25 * L, 0.28 * L, 0.11 * L), piel, rot=rot))
-        prims.append(Elipsoide(P(0.70, -0.02, 0.0), (0.22 * L, 0.27 * L, 0.085 * L), piel, rot=rot))  # dedos juntos
-        prims.append(Capsula(P(0.16, 0.20, 0.03), P(0.40, 0.40, 0.05), 0.075 * L, piel))  # pulgar abierto
-        puntos["palma"] = P(0.42, 0.0, 0.12)
-        puntos["yemas"] = P(0.92, -0.02, 0.0)
-    elif forma == "contar":
-        dedos = list(dedos or (0, 0, 0, 0, 0)) + [0] * 5
-        prims.append(Elipsoide(P(0.30, 0.0, 0.0), (0.25 * L, 0.28 * L, 0.12 * L), piel, rot=rot))
-        for k in range(4):
-            e = float(np.clip(dedos[k], 0, 1))
-            base = P(0.53, DEDOS_OFFS[k], 0.0)
-            abanico = DEDOS_OFFS[k] * 0.45 * e
-            a1 = (1 - e) * math.radians(88)
-            a2 = (1 - e) * math.radians(105)
-            l1, l2 = DEDOS_LARGO[k] * 0.55 * L, DEDOS_LARGO[k] * 0.45 * L
-            u1 = _norm(d * math.cos(a1) + nrm * math.sin(a1) + lat * abanico)
-            p1 = base + u1 * l1
-            u2 = _norm(d * math.cos(a1 + a2) + nrm * math.sin(a1 + a2) + lat * abanico)
-            p2 = p1 + u2 * l2
-            prims.append(Capsula(base, p1, 0.068 * L, piel))
-            prims.append(Capsula(p1, p2, 0.063 * L, piel))
-        e = float(np.clip(dedos[4], 0, 1))
-        base = P(0.13, 0.21, 0.02)
-        abierto = base + (d * 0.24 + lat * 0.30) * L
-        doblado = base + (d * 0.34 - lat * 0.14 + nrm * 0.13) * L
-        prims.append(Capsula(base, doblado + (abierto - doblado) * e, 0.076 * L, piel))
-    else:  # relajada: dedos juntos un poco curvados
-        prims.append(Elipsoide(P(0.30, 0.0, 0.02), (0.25 * L, 0.28 * L, 0.12 * L), piel, rot=rot))
-        prims.append(Elipsoide(P(0.64, -0.01, 0.07), (0.22 * L, 0.23 * L, 0.10 * L), piel, rot=rot))
-        prims.append(Capsula(P(0.16, 0.20, 0.04), P(0.40, 0.19, 0.14), 0.075 * L, piel))
+    cierre = float(np.mean(params[0]))
+    prims.append(Elipsoide(tuple(W + d * (0.30 * L) + nrm * (0.02 * L)), (0.25 * L, 0.28 * L, (0.12 + 0.03 * cierre) * L), piel, rot=rot))
+    dedos_seg, pulgar, puntos = _geometria_mano(W, d, nrm, lat, L, params)
+    for base, p1, p2 in dedos_seg:
+        prims.append(Capsula(tuple(base), tuple(p1), 0.07 * L, piel))
+        prims.append(Capsula(tuple(p1), tuple(p2), 0.064 * L, piel))
+    base_p, junta, tip = pulgar
+    prims.append(Capsula(tuple(base_p), tuple(junta), 0.082 * L, piel))
+    prims.append(Capsula(tuple(junta), tuple(tip), 0.074 * L, piel))
+    puntos["marco"] = (d, nrm, lat)
     return puntos
-
-
-def cuenta_dedos(n):
-    """Extensión de cada dedo (índice, medio, anular, meñique, pulgar) para mostrar `n` (fraccionario: se estiran poco a poco)."""
-    return tuple(float(np.clip(n - k, 0, 1)) for k in range(5))
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +337,10 @@ class Personaje:
     pelo: color · estilo: mono | corto | bebe | coletas | capucha
     """
 
-    def __init__(self, tipo, ropa, pantalon, pelo, estilo, piel=PIEL, arrugas=False, pegatina=None, zapatos=(70, 54, 46)):
+    def __init__(self, tipo, ropa, pantalon, pelo, estilo, piel=PIEL, arrugas=False, pegatina=None, zapatos=(70, 54, 46), nombre=None):
         self.p = TIPOS[tipo]
         self.tipo = tipo
+        self.nombre = nombre or tipo  # dueño de sus primitivas (revisión de choques)
         self.ropa = ropa
         self.pantalon = pantalon
         self.pelo = pelo
@@ -320,11 +409,15 @@ class Personaje:
             cabeza.cabeceo_textura = -cabeceo * 0.85
             prims.append(cabeza)
             self._pelo_y_orejas(prims, hx, hy, hz, R, giro, cabeceo)
+        self._etiquetar(prims, 0, "cabeza")
         # ---- cuello, torso y cadera
         top = cy + R * 1.45
         cin = cy + P["cintura_y"] * R
         if not pose.get("solo_hombros"):
+            n0 = len(prims)
             prims.append(Capsula(tf((cx, cy + R * 0.7, z0 - R * 0.3)), tf((xb, top + R * 0.25, zb + R * 0.05)), R * 0.3, self.piel))
+            self._etiquetar(prims, n0, "cuello")
+            n0 = len(prims)
             pecho_r = P["pecho"] * R
             ys = cy + P["hombro_y"] * R
             hx_ = (P["hombro_x"] - 0.18) * R
@@ -332,19 +425,24 @@ class Personaje:
             prims.append(Capsula(tf((xb, top + pecho_r * 0.95, zb)), tf((xb, cin - R * 0.1, zb)), pecho_r, self.ropa, aplanado=P["prof"], brillo=0.04))
             if self.estilo == "capucha":  # capucha caída sobre los hombros
                 prims.append(Capsula(tf((xb - pecho_r * 0.6, top + R * 0.12, zb - R * 0.32)), tf((xb + pecho_r * 0.6, top + R * 0.12, zb - R * 0.32)), R * 0.42, self.ropa))
+            if self.pegatina:  # pegatina «paciente valiente» en el pecho (disco con dibujo)
+                pz = zb + pecho_r * P["prof"] * 0.985
+                c_peg = tf((xb + pecho_r * 0.36, top + R * 0.95, pz))
+                frente = _norm(tf((xb + pecho_r * 0.36, top + R * 0.95, pz + 10)) - c_peg)
+                eje_x = _norm(np.array([1.0, 0.0, 0.0], np.float32) - frente * float(frente[0]))
+                rot = np.stack([eje_x, -frente, np.cross(eje_x, -frente)], 1)
+                prims.append(Cilindro(tuple(c_peg), R * 0.3, 1.2, (250, 250, 248), rot=rot, brillo=0.3, textura_tapa=textura_pegatina()))
+            self._etiquetar(prims, n0, "torso")
+            n0 = len(prims)
             if pose.get("piernas", "ocultas") != "ninguna":
                 cad_r = P["cadera"] * R
                 prims.append(Capsula(tf((xb, cin - R * 0.25, zb)), tf((xb, y_cadera + R * 0.15, zb), False), cad_r, self.pantalon, aplanado=P["prof"] * 1.04, brillo=0.03))
                 prims.append(Capsula(tf((xb, cin - R * 0.32, zb)), tf((xb, cin + R * 0.05, zb)), pecho_r * 0.97, self.ropa, aplanado=P["prof"] * 1.06, brillo=0.04))  # bajo del suéter
+            self._etiquetar(prims, n0, "cadera")
             self._piernas(prims, pose, xb, zb, y_cadera, R, tf)
-            if self.pegatina:  # pegatina «paciente valiente» en el pecho
-                pz = zb + pecho_r * P["prof"] * 0.97
-                prims.append(Elipsoide(tf((xb + pecho_r * 0.38, top + R * 0.95, pz)), (R * 0.27, R * 0.27, R * 0.05), self.pegatina, brillo=0.25))
-        info = {"cabeza": (hx, hy, hz), "R": R, "giro": giro, "cabeceo": cabeceo, "manos": {}, "hombros": {}, "puntos": {}, "error": {}}
+        info = {"cabeza": (hx, hy, hz), "R": R, "giro": giro, "cabeceo": cabeceo, "manos": {}, "hombros": {}, "puntos": {}, "error": {}, "dueno": self.nombre}
         info["boca"] = self.boca(hx, hy, hz, R, giro, cabeceo)
         info["torso"] = (xb, top, cin, zb)
-        for q in prims:
-            q.parte = "cuerpo"
         # ---- brazos (cinemática inversa hacia la muñeca)
         l1, l2 = P["brazo"][0] * R, P["brazo"][1] * R
         L = P["mano"] * R
@@ -354,25 +452,36 @@ class Personaje:
             if pose.get("solo_hombros"):
                 continue
             n0 = len(prims)
-            muneca, d, nrm, forma, dedos, polo = self._mano_objetivo(pose, lado, sx, hombro, l1, l2, L, R)
+            muneca, d, nrm, params, polo = self._mano_objetivo(pose, lado, sx, hombro, l1, l2, L, R)
             codo, mu = ik(hombro, muneca, l1, l2, polo)
             info["error"][lado] = float(np.linalg.norm(mu - muneca))
-            if forma is None:  # mano colgando: sigue al antebrazo
+            if params is None:  # mano colgando: sigue al antebrazo
                 d = _norm(mu - codo)
                 nrm = np.array([-sx, 0.0, 0.25], np.float32)
-                forma = "relajada"
+                params = params_forma("relajada")
             g1, g2 = P["grosor"][0] * R, P["grosor"][1] * R
             prims.append(Elipsoide(hombro, (g1 * 1.15, g1 * 1.15, g1 * 1.1), self.ropa, brillo=0.04))
             prims.append(Capsula(hombro, codo, g1, self.ropa, brillo=0.04))
+            self._etiquetar(prims, n0, f"brazo_{lado}_1")
+            n0 = len(prims)
             prims.append(Capsula(codo, mu, g2, self.ropa, brillo=0.04))
             prims.append(Capsula(mu - _norm(mu - codo) * g2 * 0.6, mu + _norm(d) * L * 0.08, g2 * 0.62, self.piel))  # muñeca
-            pts = construir_mano(prims, mu, d, nrm, sx, L, self.piel, forma, dedos)
+            self._etiquetar(prims, n0, f"brazo_{lado}_2")
+            n0 = len(prims)
+            pts = construir_mano(prims, mu, d, nrm, sx, L, self.piel, params)
+            self._etiquetar(prims, n0, f"mano_{lado}")
             info["manos"][lado] = tuple(float(v) for v in pts["centro"])
             info["puntos"][lado] = pts
             info.setdefault("codos", {})[lado] = tuple(float(v) for v in codo)
-            for q in prims[n0:]:
-                q.parte = "brazo"
         return prims, info
+
+    def _etiquetar(self, prims, desde, grupo):
+        """Marca dueño y parte del cuerpo de las primitivas añadidas desde `desde` (para revisar choques)."""
+        for q in prims[desde:]:
+            q.dueno = self.nombre
+            q.grupo = grupo
+            q.parte = "brazo" if grupo.startswith(("brazo", "mano")) else "cuerpo"
+
 
     # ------------------------------------------------------------ partes
     @staticmethod
@@ -419,68 +528,78 @@ class Personaje:
         ancho = P["cadera"] * R
         l1, l2 = P["muslo"] * R, P["pierna"] * R
         g = R * 0.36
-        if piernas == "sentado":  # sentado en la encimera: muslos hacia la cámara, piernas colgando un poco
-            for sx in (-1, 1):
+        if piernas == "sentado":  # sentado en la encimera: muslos apoyados hacia la cámara, piernas colgando dentro del lavabo
+            asiento = pose.get("asiento_y", y_cadera + R * 1.15)
+            for lado, sx in (("izq", -1), ("der", 1)):
+                n0 = len(prims)
                 cadera = tf((xb + sx * ancho * 0.45, y_cadera, zb), False)
-                rodilla = cadera + np.array([sx * ancho * 0.45, R * 0.05, l1 * 0.92], np.float32)
-                pie = rodilla + np.array([sx * ancho * 0.2, l2 * 0.42, l2 * 0.82], np.float32)
+                g_muslo = g * 1.25
+                caida = max(0.0, (asiento - g_muslo) - float(cadera[1]))
+                avance = math.sqrt(max(l1 * l1 - caida * caida - (ancho * 0.45) ** 2, 1.0))
+                rodilla = cadera + np.array([sx * ancho * 0.45, caida, avance], np.float32)
+                pie = rodilla + np.array([sx * ancho * 0.2, l2 * 0.55, l2 * 0.72], np.float32)
                 prims.append(Capsula(cadera, rodilla, g * 1.25, self.pantalon))
                 prims.append(Capsula(rodilla, pie, g * 1.1, self.pantalon))
                 prims.append(Elipsoide(tuple(pie + np.array([0, R * 0.05, R * 0.15], np.float32)), (R * 0.32, R * 0.28, R * 0.42), self.piel))
+                self._etiquetar(prims, n0, f"pierna_{lado}")
+                for q in prims[n0:]:
+                    q.sentado = True  # piernas a la vista sobre la encimera: no pueden atravesarla
             return
         pies = piernas.get("pies", {}) if isinstance(piernas, dict) else {}
         suelo = y_cadera + R * 0.25 + l1 + l2
         for lado, sx in (("izq", -1), ("der", 1)):
+            n0 = len(prims)
             cadera = tf((xb + sx * ancho * 0.45, y_cadera + R * 0.25, zb), False)
             tobillo = np.asarray(pies.get(lado, (cadera[0], suelo, cadera[2])), np.float32)
             rodilla, tob = ik(cadera, tobillo, l1, l2, (0, 0, 1))
             prims.append(Capsula(cadera, rodilla, g, self.pantalon, brillo=0.03))
             prims.append(Capsula(rodilla, tob, g * 0.86, self.pantalon, brillo=0.03))
             prims.append(Elipsoide(tuple(tob + np.array([0, R * 0.2, R * 0.28], np.float32)), (R * 0.36, R * 0.22, R * P["pie"] * 0.6), self.zapatos, brillo=0.1))
+            self._etiquetar(prims, n0, f"pierna_{lado}")
 
     def _mano_objetivo(self, pose, lado, sx, hombro, l1, l2, L, R):
-        """(muñeca, dir, nrm, forma, dedos, polo) a partir de lo que pide la pose para esa mano."""
+        """(muñeca, dir, nrm, parámetros de la mano, polo) a partir de lo que pide la pose para esa mano."""
         spec = pose.get(f"mano_{lado}")
         polo = np.array([sx * 0.75, 0.55, -0.35], np.float32)
         H = np.asarray(hombro, np.float32)
         if spec is None:  # colgando, con balanceo al caminar
             ang = pose.get("balanceo", 0.0) * (-sx)
             larg = (l1 + l2) * 0.97
-            muneca = H + np.array([sx * R * 0.2, larg * math.cos(ang), larg * math.sin(ang) + R * 0.12], np.float32)
-            return muneca, None, None, None, None, polo
+            muneca = H + np.array([sx * R * 0.34, larg * math.cos(ang), larg * math.sin(ang) + R * 0.12], np.float32)
+            return muneca, None, None, None, polo
         if not isinstance(spec, dict):
             spec = {"centro": spec}
         polo = np.asarray(spec.get("polo", polo), np.float32)
-        forma = spec.get("forma", "relajada")
-        dedos = spec.get("dedos")
-        if "agarre" in spec:  # puño alrededor de un mango: el mango sale por el lado del pulgar hacia `eje`
+
+        def params(defecto):
+            if "mezcla" in spec:
+                fa, fb, k = spec["mezcla"]
+                return mezclar_formas(fa, fb, k, spec.get("dedos_a"), spec.get("dedos_b", spec.get("dedos")))
+            return params_forma(spec.get("forma", defecto), spec.get("dedos"))
+
+        if "agarre" in spec:  # dedos alrededor de un mango: el mango sale por el lado del pulgar hacia `eje`
             g = np.asarray(spec["agarre"], np.float32)
             lat = _norm(spec["eje"])
             d0 = _norm(np.asarray(spec.get("dir", g - H + np.array([0, R * 0.8, 0], np.float32)), np.float32))
             d = d0 - lat * float(d0 @ lat)
             d = _norm(d if np.linalg.norm(d) > 1e-4 else np.array([0, 1, 0], np.float32))
             nrm = _norm(sx * np.cross(lat, d))
-            muneca = g - (d * 0.38 + nrm * 0.11) * L
-            return muneca, d, nrm, "puño", None, polo
+            pr = params("agarre")
+            muneca, d, nrm = muneca_para(g, "agarre", d, nrm, sx, L, pr)
+            return muneca, d, nrm, pr, polo
         d = np.asarray(spec.get("dir", (0, 1, 0)), np.float32)
         nrm = np.asarray(spec.get("nrm", (-sx, 0, 0.3)), np.float32)
-        dd, nn, ll = marco_mano(d, nrm, sx)
-        if "pinza" in spec:
-            q = np.asarray(spec["pinza"], np.float32)
-            muneca = q - (dd * 0.70 + ll * 0.19 + nn * 0.15) * L
-            forma = "pinza"
-        elif "palma" in spec:  # punto donde apoya la palma (mano abierta)
-            q = np.asarray(spec["palma"], np.float32)
-            muneca = q - (dd * 0.42 + nn * 0.12) * L
-            forma = spec.get("forma", "abierta")
-        elif "muneca" in spec:
-            muneca = np.asarray(spec["muneca"], np.float32)
-        else:
-            q = np.asarray(spec["centro"], np.float32)
-            if "dir" not in spec:
-                dd = _norm(q - H + np.array([0, R * 0.5, 0], np.float32))
-                nrm = np.asarray(spec.get("nrm", (-sx, 0, 0.3)), np.float32)
-                dd, nn, ll = marco_mano(dd, nrm, sx)
-            muneca = q - (dd * 0.4 + nn * 0.05) * L
-            d = dd
-        return muneca, dd, nn, forma, dedos, polo
+        for clave, defecto in (("pinza", "pinza"), ("palma", "abierta"), ("yemas", "abierta"), ("indice", "senalar")):
+            if clave in spec:
+                pr = params(defecto)
+                muneca, dd, nn = muneca_para(spec[clave], clave, d, nrm, sx, L, pr)
+                return muneca, dd, nn, pr, polo
+        pr = params("relajada")
+        if "muneca" in spec:
+            dd, nn, _ = marco_mano(d, nrm, sx)
+            return np.asarray(spec["muneca"], np.float32), dd, nn, pr, polo
+        q = np.asarray(spec["centro"], np.float32)
+        if "dir" not in spec:
+            d = _norm(q - H + np.array([0, R * 0.5, 0], np.float32))
+        muneca, dd, nn = muneca_para(q, "centro", d, nrm, sx, L, pr)
+        return muneca, dd, nn, pr, polo

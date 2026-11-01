@@ -233,8 +233,18 @@ def render_lineas(
     segs_por_linea = [[(l, color)] if isinstance(l, str) else l for l in lineas]
     anchos = [sum(medir_texto(s, rol, tam) for s, _ in segs) for segs in segs_por_linea]
     pad = contorno + sombra * 2 + 6
+    # espacio real por encima de la línea base de la primera línea: los acentos de las mayúsculas
+    # (Ñ, É, Á…) sobresalen de la altura nominal de la fuente y no deben recortarse
+    medidor = ImageDraw.Draw(Image.new("L", (1, 1)))
+    alto_real = asc
+    for texto, _ in segs_por_linea[0] if segs_por_linea else []:
+        for tipo, t in _tramos(texto):
+            if tipo != "emoji" and t:
+                caja = medidor.textbbox((0, 0), t, font=fuente("simbolos" if tipo == "simbolo" else rol, tam), anchor="ls")
+                alto_real = max(alto_real, -caja[1])
+    extra_arriba = int(math.ceil(alto_real - asc))
     W = int(max(anchos + [1]) + pad * 2)
-    H = int(alto_linea * len(lineas) + pad * 2 + desc)
+    H = int(alto_linea * len(lineas) + pad * 2 + desc + extra_arriba)
     capa = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(capa)
     emojis = []
@@ -243,7 +253,7 @@ def render_lineas(
             x = pad + (W - 2 * pad - anchos[i]) / 2
         else:
             x = pad
-        base_y = pad + i * alto_linea + asc
+        base_y = pad + extra_arriba + i * alto_linea + asc
         for texto, col in segs:
             for tipo, t in _tramos(texto):
                 if tipo == "emoji":
