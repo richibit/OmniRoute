@@ -44,7 +44,7 @@ ESCENAS = [
      "sonidos": [("pasos", 0.0, 0.5), ("vaso", 1.75, 0.5), ("cepillado_suave", 3.3, 0.6)]},
     {"id": 6, "inicio": 19.0, "fin": 23.0, "luz": "manana", "subtitulo": "te llevaba al dentista aunque no te doliera nada.",
      "contador": (ROTULO_VECES, 3166, 3166, [("TIENES 5 AÑOS", False)]),
-     "sonidos": [("papel", 2.4, 0.8)]},
+     "sonidos": [("papel", 2.45, 0.8)]},
     {"id": 7, "inicio": 23.0, "fin": 27.0, "luz": "manana", "subtitulo": "se te cayó el primer diente. ella lo guardó.",
      "contador": (ROTULO_VECES, 3896, 3896, [("TIENES 6 AÑOS", False)]),
      "sonidos": [("papel", 1.65, 0.7), ("lata", 2.98, 0.9)]},
@@ -89,7 +89,7 @@ ESCENAS = [
 ]
 
 # Tarjetas metidas en el marco del espejo (esquina superior derecha).
-TARJETA_HIJO = {"titulo": "Próxima cita", "lineas": ["14 de marzo, 5:00 pm"], "aparece": 21.2}
+TARJETA_HIJO = {"titulo": "Próxima cita", "lineas": ["14 de marzo, 5 pm"], "aparece": 21.2}
 TARJETA_MAMA = {
     "titulo": f"Cita dental · {NOMBRE_MAMA}",
     "tachadas": ["3 de abril", "9 de junio", "20 de sept."],

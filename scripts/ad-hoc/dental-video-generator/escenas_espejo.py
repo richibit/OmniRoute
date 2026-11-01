@@ -139,8 +139,12 @@ def hijo(edad, pegatina=False):
         return PJ.Personaje("bebe", (176, 208, 238), (176, 208, 238), (70, 48, 34), "bebe", nombre="hijo")
     if edad < 3:
         return PJ.Personaje("pequeno", (128, 174, 230), (128, 174, 230), (64, 42, 30), "corto", nombre="hijo")
+    if edad < 5:
+        return PJ.Personaje("nino4", (86, 128, 212), (86, 128, 212), (60, 40, 28), "corto", nombre="hijo")
+    if edad < 6:  # a los 5, otra camiseta (otro día): la pegatina del dentista va en el dorso de la mano
+        return PJ.Personaje("nino4", (204, 86, 76), (64, 84, 132), (60, 40, 28), "corto", nombre="hijo")
     if edad < 6.5:
-        return PJ.Personaje("nino4", (86, 128, 212), (86, 128, 212), (60, 40, 28), "corto", pegatina=True if pegatina else None, nombre="hijo")
+        return PJ.Personaje("nino4", (84, 158, 118), (64, 84, 132), (60, 40, 28), "corto", nombre="hijo")
     if edad < 10:
         return PJ.Personaje("nino7", (86, 128, 212), (86, 128, 212), (60, 40, 28), "corto", nombre="hijo")
     if edad < 25:
@@ -310,6 +314,8 @@ def sprite_tarjeta(titulo, lineas, tachadas=(), nueva=None, ancho=300, color=(25
     """
     filas = 1 + len(lineas) + len(tachadas) + (1 if nueva else 0)
     alto = 70 + filas * 46
+    f_med = fuente("manuscrita", 40)
+    ancho = max(ancho, int(math.ceil(max(f_med.getlength(x) for x in (titulo,) + tuple(lineas) + tuple(tachadas) + ((nueva,) if nueva else ())) + 48)))  # el texto nunca se corta
     img = Image.new("RGBA", (ancho * ss, alto * ss), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([0, 0, ancho * ss - 1, alto * ss - 1], radius=10 * ss, fill=color + (255,))
@@ -403,8 +409,8 @@ def punta_nota(k, t):
 # Tarjetas en el marco del espejo (3D, en el plano del espejo)
 # ---------------------------------------------------------------------------
 # centro en pantalla con el encuadre base y giro (grados, como PIL: + antihorario)
-RANURAS = {0: ((885.0, 480.0), -6.0), 1: ((205.0, 520.0), 4.0), 2: ((800.0, 365.0), -3.0)}  # la 1 no tapa la puerta
-Z_MARCO = S.ESPEJO_Z - 3.0
+RANURAS = {0: ((760.0, 490.0), -5.0), 1: ((205.0, 520.0), 4.0), 2: ((800.0, 365.0), -3.0)}  # la 0 queda al alcance de mamá sin cruzarle la cara; la 1 no tapa la puerta
+Z_MARCO = S.ESPEJO_Z - 5.0
 
 
 def ranura(indice, ancho_px, alto_px):
@@ -849,6 +855,21 @@ class Renderizador:
         return {"palma": tuple(punto), "dir": tuple(d), "nrm": tuple(-fuera), "mezcla": ("abierta", "relajada", 0.15), "polo": (sx * 1.0, 0.3, 0.2)}
 
     @staticmethod
+    def pegatina_en_mano(info, lado, quien):
+        """Pegatina «paciente valiente» pegada en el dorso de la mano (disco con dibujo, sigue a la mano)."""
+        pts = info["puntos"].get(lado)
+        if not pts:
+            return []
+        d, nrm, lat = pts["marco"]
+        L = quien.p["mano"] * info["R"]
+        c = np.asarray(pts["centro"], np.float32) - nrm * (0.17 * L + 1.0) + d * (0.06 * L)
+        afuera = -nrm  # el dorso
+        eje_x = N(lat - afuera * float(lat @ afuera))
+        rot = np.stack([eje_x, -afuera, np.cross(eje_x, -afuera)], 1)
+        disco = J.Cilindro(tuple(c), 0.25 * L, 1.0, (250, 250, 248), rot=rot, brillo=0.3, textura_tapa=PJ.textura_pegatina())
+        return U.etiqueta([disco], "pegatina", ignorar=((info["dueno"], f"mano_{lado}"), (info["dueno"], f"brazo_{lado}_2")))
+
+    @staticmethod
     def mano_en_coronilla(info, lado="der"):
         """Palma apoyada encima de la cabeza de otra persona (desde atrás, sin taparle la cara), los dedos hacia delante."""
         hx, hy, hz = info["cabeza"]
@@ -936,10 +957,11 @@ class Renderizador:
         _, aw, ah, _ = ranura(0, w, h)
         R = np.asarray(rot, np.float32)
         sxe = 1 if esquina == "der" else -1
-        local = np.array([sxe * (aw / 2 - 13), ah / 2 - 15, -1.6], np.float32)
+        local = np.array([sxe * (aw / 2 - 13), ah / 2 - 15, -7.5], np.float32)
         centro = np.asarray(pinza, np.float32) - R @ local
         tex = tex if tex is not None else tex_tarjeta(*TARJETAS[nombre]["args"], **TARJETAS[nombre]["kw"])
-        mano = {"pinza": tuple(pinza), "dir": tuple(R @ np.array([-sxe * 0.45, -0.88, 0.12], np.float32)), "nrm": tuple(R @ np.array([0.0, 0.0, -1.0], np.float32)), "polo": polo}
+        # la mano va por detrás de la tarjeta (del lado de quien la sostiene): la palma hacia la tarjeta, el pulgar asoma por la esquina
+        mano = {"pinza": tuple(pinza), "dir": tuple(R @ np.array([-sxe * 0.45, -0.88, 0.0], np.float32)), "nrm": tuple(R @ np.array([0.0, 0.0, 1.0], np.float32)), "polo": polo}
         if forma is not None:
             mano["mezcla"] = forma
         prims = U.tarjeta(centro, aw, ah, tex, R)
@@ -957,7 +979,7 @@ class Renderizador:
         w, h = medidas_tarjeta(nombre)
         c_r, aw, ah, R_r = ranura(indice, w, h)
         sxe = 1 if esquina == "der" else -1
-        local = np.array([sxe * (aw / 2 - 13), ah / 2 - 15, -1.6], np.float32)
+        local = np.array([sxe * (aw / 2 - 13), ah / 2 - 15, -7.5], np.float32)
         pinza_r = c_r + R_r @ local
         ang_r = math.atan2(float(R_r[1, 0]), float(R_r[0, 0]))
         p_ini = np.asarray(pinza_ini, np.float32)
@@ -978,8 +1000,10 @@ class Renderizador:
         if lt < t_fin:
             abre = suave(progreso(lt, t_suelta, t_suelta + 0.14))
             p = np.array(curva(lt, [(t_suelta, tuple(pinza_r)), (t_suelta + 0.18, tuple(pinza_r + np.array([0, 30, -60], np.float32))), (t_suelta + 0.5, tuple(p_via)), (t_fin, tuple(p_rep))]), np.float32)
-            d = R_r @ np.array([-sxe * 0.45, -0.88, 0.12], np.float32)
-            mano = {"pinza": tuple(p), "dir": tuple(d), "nrm": tuple(R_r @ np.array([0.0, 0, -1.0], np.float32)), "mezcla": ("pinza", "relajada", abre), "polo": polo}
+            d = R_r @ np.array([-sxe * 0.45, -0.88, 0.0], np.float32)
+            mano = {"pinza": tuple(p), "dir": tuple(d), "nrm": tuple(R_r @ np.array([0.0, 0, 1.0], np.float32)), "mezcla": ("pinza", "relajada", abre), "polo": polo}
+            if lt < t_suelta + 0.3:  # los dedos todavía rozan la tarjeta al soltarla
+                U.permitir(marco, (dueno, f"mano_{lado}"))
         return None, mano, incl, mirar, marco, suave(progreso(lt, t_suelta + 0.15, t_suelta + 0.45))
 
     # ================================================================ ESCENAS
@@ -1284,34 +1308,42 @@ class Renderizador:
         prims = pm + pb + cep + self.encimera_objetos(t, ("amarillo", "azul" if lt < 1.62 else None))
         return self.componer(t, "noche", prims, sombras=sombras)
 
-    # 6 · De regreso del dentista: enseña su pegatina de «paciente valiente» y los dientes; mamá mete la tarjeta en el marco
+    # 6 · De regreso del dentista: presume la pegatina de «paciente valiente» en el dorso de la mano; mamá mete la tarjeta en el marco
     def escena_6(self, t, e):
         lt = t - e["inicio"]
         esc = 1.03
-        pos_n = (NINO4[0], y_cabeza("nino4", 215, esc), NINO4[2])
-        ib = self.info(t, hijo(5, True), {"cara": "dientes"}, pos_n, escala=esc, desfase=1.7)
-        P = PJ.TIPOS["nino4"]
-        R = P["R"] * esc
-        xb, top, _, zb = ib["torso"]
-        pegatina = np.array([xb + P["pecho"] * R * 0.36, top + 0.95 * R, zb + P["prof"] * P["pecho"] * R * 0.985 + 7], np.float32)
-        senala = suave(progreso(lt, 0.25, 0.6)) * (1 - suave(progreso(lt, 1.6, 1.95)))
-        reposo = self.mano_en_borde(pos_n[0] + 100, "der")
-        if senala > 0.01:  # se señala la pegatina con el índice, orgulloso
-            p = np.asarray(reposo["palma"], np.float32) * (1 - senala) + (pegatina + np.array([2, 0, 3], np.float32)) * senala
-            mano_der = {"indice": tuple(p), "dir": (-0.35, 0.15, -0.92), "nrm": (-0.9, 0.3, 0.1), "mezcla": ("relajada", "senalar", senala), "polo": (0.8, 1.0, 0.1)}
-        else:
-            mano_der = reposo
-        pb, _ = self.persona(t, hijo(5, True), {"cara": "dientes", "mano_der": mano_der, "mano_izq": self.mano_en_borde(pos_n[0] - 100, "izq"), "cabeceo": 0.1 * senala}, pos_n, escala=esc, desfase=1.7)
-        pinza_ini = (MAMA[0] - 105, MAMA[1] + 350 + 3 * math.sin(lt * 2), MAMA[2] + 100)
-        prims_t, mano, incl, mirar, marco, f_sombra = self.meter_en_marco(lt, "hijo", 0, 1.15, 1.35, 2.35, 2.6, pinza_ini, "mama", "izq", esquina="der", inclinacion=0.3, polo=(-0.25, 1.0, 0.25))
-        if mano is None and lt > 3.45:  # luego apoya la mano en el hombro del niño
-            mano = self.mano_en_hombro(ib, "der")
-        elif mano is None:
-            mano = {"centro": tuple(np.asarray(pinza_ini, np.float32) + np.array([0, 90, -30], np.float32)), "forma": "relajada"}
-        mira_m = mirar if mirar is not None else (tuple(ib["cabeza"]) if lt < 1.15 or lt > 3.3 else None)
-        pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "inclinacion": incl, "mano_izq": mano, "mano_der": self.mano_en_encimera(MAMA[0] + 150, "der", 60), "mirar": mira_m}, MAMA)
+        quien_n = hijo(5)
+        pos_n = (452.0, y_cabeza("nino4", 215, esc), NINO4[2])
+        pose_n = {"cara": "dientes"}
+        ib = self.info(t, quien_n, pose_n, pos_n, escala=esc, desfase=1.7)
+        hx, hy, hz = ib["cabeza"]
+        R = ib["R"]
+        # levanta su mano derecha (la de la izquierda de la pantalla, lejos de mamá) junto a la cara, con el dorso
+        # hacia el espejo: la pegatina a la vista; luego la vuelve a apoyar
+        ensena = suave(progreso(lt, 0.15, 0.5)) * (1 - suave(progreso(lt, 1.2, 1.55)))
+        reposo = self.mano_en_borde(pos_n[0] - 100, "izq")
+        alto = {"centro": (hx - 1.18 * R, hy + 0.45 * R + 4 * math.sin(lt * 5.0), hz + 0.75 * R), "dir": (-0.15, -1.0, 0.12), "nrm": (0.35, 0.0, -1.0), "forma": "relajada", "polo": (-0.55, 0.7, -0.6)}
+        mano_izq = self.transicion(t, quien_n, pose_n, pos_n, "izq", reposo, alto, ensena, escala=esc, desfase=1.7, arco=(-10.0, -70.0, -16.0))
+        pb, ibn = self.persona(t, quien_n, dict(pose_n, mano_izq=mano_izq, mano_der=self.mano_en_borde(pos_n[0] + 100, "der")), pos_n, escala=esc, desfase=1.7)
+        pb += self.pegatina_en_mano(ibn, "izq", quien_n)
+        # mamá, a su lado (sin pegarse), con la tarjeta de la próxima cita; da un paso hacia el centro para llegar al marco
+        x_m = kf(lt, [(1.3, 880.0), (1.75, 814.0), (2.85, 814.0), (3.35, 880.0)])
+        pos_m = (x_m, YM + 3.0 * math.sin(math.pi * progreso(lt, 1.3, 1.75)) + 3.0 * math.sin(math.pi * progreso(lt, 2.85, 3.35)), -20.0)
+        pinza_ini = (pos_m[0] - 110, pos_m[1] + 310 + 3 * math.sin(lt * 2), pos_m[2] + 130)  # a un lado, por delante (ni su cadera ni los cepillos del vaso)
+        prims_t, mano, incl, mirar, marco, f_sombra = self.meter_en_marco(lt, "hijo", 0, 1.3, 1.5, 2.45, 2.7, pinza_ini, "mama", "izq", esquina="der", inclinacion=0.5, polo=(-0.15, 0.9, -0.4), reposo=pinza_ini)
+        puntas = 46.0 * incl / 0.5  # se pone de puntitas para llegar al marco
+        pos_mm = (pos_m[0], pos_m[1] - puntas, pos_m[2])
+        pose_m = {"cara": "sonrisa", "inclinacion": incl, "mano_der": self.mano_en_encimera(pos_m[0] + 150, "der", 60)}
+        if mano is None:
+            hombro = self.mano_en_hombro(ib, "der")  # al final apoya la mano en su hombro
+            hombro["palma"] = tuple(np.asarray(hombro["palma"], np.float32) + np.array([0.0, -8.0, 4.0], np.float32))
+            espera = {"pinza": pinza_ini, "dir": (-0.3, -0.85, 0.4), "nrm": (-0.2, 0.3, -1.0), "forma": "relajada", "polo": (-0.3, 0.9, -0.3)}
+            mano = self.transicion(t, mama(26), pose_m, pos_mm, "izq", espera, hombro, suave(progreso(lt, 3.55, 3.9)), arco=(0.0, -40.0, 0.0))
+        pose_m["mano_izq"] = mano
+        pose_m["mirar"] = mirar if mirar is not None else (tuple(ib["cabeza"]) if lt < 1.3 or lt > 3.4 else None)
+        pm, _ = self.persona(t, mama(26), pose_m, pos_mm)
         prims = pm + pb + (prims_t or []) + self.encimera_objetos(t)
-        sombras = [(pos_n[0] - 72, 64, 36, 20, 0.4), (pos_n[0] + 72, 64, 36, 20, 0.4 * (1 - senala)), (MAMA[0] + 150, 60, 36, 20, 0.4)]
+        sombras = [(pos_n[0] - 72, 64, 36, 20, 0.4 * (1 - ensena)), (pos_n[0] + 72, 64, 36, 20, 0.4), (pos_m[0] + 150, 60, 36, 20, 0.4)]
         return self.componer(t, "manana", prims, marco=marco or (), marco_sombra=f_sombra, sombras=sombras)
 
     # 7 · Se le cae el primer diente: lo deja en un pañuelito en la mano de mamá; ella lo envuelve y lo guarda en la cajita
