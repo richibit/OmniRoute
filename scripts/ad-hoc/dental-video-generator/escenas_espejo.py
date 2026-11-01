@@ -185,6 +185,7 @@ YM = y_cabeza("adulta")
 MAMA = (825.0, YM, -5.0)
 NINO_AL_LADO = 505.0  # x del niño cuando mamá está a su lado (no a su espalda)
 MAMA_DETRAS = (562.0, YM, -108.0)
+EJE_SOLO = (-0.88, 0.28, 0.38)  # quien se cepilla solo: el mango sale hacia su mano derecha, la mano lejos de la mejilla
 MAMA_SOLA = (545.0, YM, -5.0)
 MAMA_BEBE = (562.0, YM, -32.0)
 NINO4 = (548.0, y_cabeza("nino4", 215), 22.0)
@@ -1479,7 +1480,8 @@ class Renderizador:
     # 8 · De noche, mamá sola deja unas monedas y escribe la nota del Ratón de los Dientes (acercamiento lento)
     def escena_8(self, t, e):
         lt = t - e["inicio"]
-        nota_c = np.array([520.0, S.ENCIMERA_Y - 0.9, 100.0], np.float32)
+        nota_c = np.array([520.0, S.ENCIMERA_Y - 0.9, 112.0], np.float32)
+        pos_m = (MAMA_SOLA[0], MAMA_SOLA[1], -72.0)  # un paso atrás: se inclina sobre la nota sin que su pecho la tape
         ancho, fondo = 150.0, 94.0
         R_nota = J.rot_y(math.pi)  # el texto mira hacia ella (desde el espejo se ve al revés)
         largos = _metricas_nota()
@@ -1516,7 +1518,7 @@ class Renderizador:
         self.sostenido(lap, "mama", "izq")
         prims += lap
         mano_izq = {"pinza": tuple(punta + eje_l * 30), "dir": (0.2, 0.62, 0.76), "nrm": (0.72, 0.1, -0.2), "mezcla": ("lapiz", "lapiz", 1.0), "polo": (-0.35, 0.7, -0.6)}
-        sitio = np.array([660.0, S.ENCIMERA_Y, 104.0], np.float32)
+        sitio = np.array([660.0, S.ENCIMERA_Y, 118.0], np.float32)
         p_mon = np.array(curva(lt, [(0.0, (690, 1090, 110)), (0.5, tuple(sitio + np.array([0, -14, 0], np.float32)))]), np.float32)
         if lt < 0.55:
             mano_der = {"pinza": tuple(p_mon), "dir": (-0.2, 0.75, 0.6), "nrm": (-0.6, 0.3, -0.6), "polo": (0.35, 0.7, -0.6)}
@@ -1527,75 +1529,102 @@ class Renderizador:
         else:
             for k, (dx_, dz_) in enumerate(((0, 0), (15, 9), (-10, 14))):
                 prims += U.moneda(sitio + np.array([dx_, -1.9 - 3.6 * (k == 0) * 0, dz_], np.float32))
-            sujeta = en_nota(0.03, 0.55, 0) + np.array([18, -9, 0], np.float32)
-            p = np.array(curva(lt, [(0.55, tuple(sitio + np.array([0, -30, 0], np.float32))), (1.05, tuple(sujeta))]), np.float32)
-            mano_der = {"palma": tuple(p), "dir": (-0.45, 0.3, 0.85), "nrm": (0, 1, 0), "mezcla": ("pinza", "relajada", progreso(lt, 0.55, 0.8)), "polo": (0.35, 0.7, -0.6)}
+            sujeta = en_nota(0.03, 0.55, 0) + np.array([32, -9, 0], np.float32)
+            p = np.array(curva(lt, [(0.55, tuple(sitio + np.array([0, -44, 0], np.float32))), (0.8, tuple((sitio + sujeta) / 2 + np.array([0, -46, 0], np.float32))), (1.05, tuple(sujeta))]), np.float32)
+            mano_der = {"palma": tuple(p), "dir": (-0.45, 0.12, 0.88), "nrm": (0, 1, 0), "mezcla": ("pinza", "abierta", progreso(lt, 0.55, 0.8)), "polo": (0.35, 0.7, -0.6)}
             U.permitir(prims[:1], ("mama", "mano_der"))
+            if lt < 0.75:  # los dedos acaban de soltar las monedas
+                for q in prims:
+                    if getattr(q, "dueno", "") == "moneda":
+                        U.permitir([q], ("mama", "mano_der"))
         cara = "concentrada" if lt < 3.75 else "sonrisa"
-        pm, _ = self.persona(t, mama(26), {"cara": cara, "mirar": tuple(punta), "inclinacion": 0.22, "mano_der": mano_der, "mano_izq": mano_izq}, MAMA_SOLA)
+        pm, _ = self.persona(t, mama(26), {"cara": cara, "mirar": tuple(punta), "inclinacion": 0.4, "mano_der": mano_der, "mano_izq": mano_izq}, pos_m, evitar=prims)  # inclinada sobre la nota, los codos por fuera
         prims += pm + self.encimera_objetos(t)
-        sombras = [(520, 100, 78, 48, 0.25), (660, 108, 28, 20, 0.4 if lt > 0.5 else 0.0)]
+        sombras = [(520, 112, 78, 48, 0.25), (660, 122, 28, 20, 0.4 if lt > 0.5 else 0.0)]
         return self.componer(t, "noche", prims, marco=tarjeta_en_ranura("hijo", 0), sombras=sombras)
 
-    def nino_cepillandose(self, t, edad, pos, cara="abierta", amp=9.0, f=2.6, agarre=60.0, extra=None, escala=1.0):
-        """El niño se cepilla solo con la mano derecha (pantalla izquierda; el mango sale hacia ese lado)."""
+    def nino_cepillandose(self, t, edad, pos, cara="abierta", amp=9.0, f=2.6, agarre=84.0, extra=None, escala=1.0, evitar=None, eje=EJE_SOLO):
+        """El niño se cepilla solo con la mano derecha (pantalla izquierda; el mango sale hacia ese lado, la mano lejos de la mejilla)."""
         quien = hijo(edad)
         base = {"cara": cara}
         base.update(extra or {})
         ib = self.info(t, quien, base, pos, escala=escala, desfase=1.7)
-        cep, spec = self.cepillo_en_boca(t, ib, (-0.84, 0.3, 0.48), U.AZUL, amp=amp, f=f, agarre=agarre)
+        cep, spec = self.cepillo_en_boca(t, ib, eje, U.AZUL, amp=amp, f=f, agarre=agarre)
         self.sostenido(cep, "hijo", "izq")
         spec["polo"] = (-0.55, 1.0, 0.3)
         pose = dict(base)
         pose["mano_izq"] = spec
         pose.setdefault("mano_der", self.mano_en_borde(pos[0] + 100, "der"))
-        pb, ib = self.persona(t, quien, pose, pos, escala=escala, desfase=1.7)
+        pb, ib = self.persona(t, quien, pose, pos, escala=escala, desfase=1.7, evitar=[] if evitar is None else evitar)
         return pb + cep, ib
 
     # 9 · El niño (7) agarra el cepillo («yo solito»): ella lo suelta y da pasos atrás hasta la puerta
     def escena_9(self, t, e):
         lt = t - e["inicio"]
         pos_n = NINO7
-        ib = self.info(t, hijo(7), {"cara": "abierta"}, pos_n, desfase=1.7)
-        para = suave(progreso(lt, 0.45, 0.75))
-        if lt < 1.05:  # mamá cepilla desde atrás; el niño sube la mano por debajo y agarra el mango más cerca de la boca
+        detras = (562.0, YM, -150.0)
+        if lt < 1.3:  # mamá cepilla desde atrás (la otra mano en su hombro); él sube la mano y agarra el mango entre la boca y la mano de ella
+            cara_n = "neutral" if lt < 0.9 else "abierta"
+            pose_n = {"cara": cara_n}
+            ib = self.info(t, hijo(7), pose_n, pos_n, desfase=1.7)
+            para = suave(progreso(lt, 0.45, 0.75))
             cep, mano_m = self.cepillo_en_boca(t, ib, (-0.80, 0.22, 0.56), U.AZUL, amp=7.0 * (1 - para), f=2.7, agarre=112.0)
             self.sostenido(cep, "mama", "izq")
-            e_m = N((-0.80, 0.22, 0.56) + np.array([0, 0.06 * math.sin(2 * math.pi * 2.7 * t + 1.2), 0], np.float32))
+            e_m = -np.asarray(mano_m["eje"], np.float32)
             cab = np.asarray(mano_m["agarre"], np.float32) - e_m * 112.0
-            ag_n = cab + e_m * 52.0
+            ag_n = cab + e_m * 64.0
             sube = suave(progreso(lt, 0.42, 0.88))
-            mano_n = None
-            if sube > 0.01:
-                lejos = ag_n + np.array([10, 190, -30], np.float32)
-                mano_n = {"agarre": tuple(lejos * (1 - sube) + ag_n * sube), "eje": tuple(-e_m), "mezcla": ("relajada", "agarre", sube), "polo": (-0.25, 1.0, 0.3)}
-                self.sostenido(cep, "hijo", "izq")
-            pb, _ = self.persona(t, hijo(7), {"cara": "neutral" if lt < 0.9 else "abierta", "mano_izq": mano_n, "mano_der": self.mano_en_borde(pos_n[0] + 100, "der")}, pos_n, desfase=1.7)
-            suelta = suave(progreso(lt, 0.85, 1.05))
+            mano_n = self.mano_en_borde(pos_n[0] - 100, "izq")
+            if sube > 0.0:
+                agarra = {"agarre": tuple(ag_n), "eje": tuple(-e_m), "mezcla": ("relajada", "agarre", progreso(lt, 0.7, 0.88)), "polo": (-0.9, 0.7, 0.1)}  # el codo abierto: el antebrazo no roza su mejilla
+                mano_n = self.transicion(t, hijo(7), pose_n, pos_n, "izq", mano_n, agarra, sube, desfase=1.7, arco=(-20.0, -50.0, 10.0))
+                if lt > 0.7:
+                    self.sostenido(cep, "hijo", "izq")
+            pose_nb = dict(pose_n, mano_izq=mano_n, mano_der=self.mano_en_borde(pos_n[0] + 100, "der"))
+            hombro = self.mano_en_hombro(ib, "der")
+            hombro["palma"] = tuple(np.asarray(hombro["palma"], np.float32) + np.array([0.0, -8.0, 4.0], np.float32))
+            hombro["polo"] = (0.8, 0.6, -0.5)
+            suelta = suave(progreso(lt, 0.84, 1.02))
             mano_m["mezcla"] = ("agarre", "relajada", suelta)
-            mano_m["polo"] = (-1.0, 0.2, -0.3)
-            mano_m["agarre"] = tuple(np.asarray(mano_m["agarre"], np.float32) + np.array([-10, -30, -40], np.float32) * suelta)
-            pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "mano_izq": mano_m, "mano_der": self.mano_en_cabeza(ib, "der") if lt < 0.8 else None, "mirar": tuple(ib["boca"])}, MAMA_DETRAS)
+            mano_m["polo"] = (-0.9, 0.5, -0.6)
+            if suelta > 0:  # abre la mano y la aparta del mango, hacia atrás
+                mano_m["agarre"] = tuple(np.asarray(mano_m["agarre"], np.float32) + np.array([-50.0, -34.0, 22.0], np.float32) * suelta)  # sale por el extremo del mango, lejos de la mano del niño
+            if lt > 0.95:
+                U.permitir(cep, ("mama", "mano_izq"))
+            if lt < 0.95:
+                mano_der_m = hombro
+            else:  # la levanta de su hombro hacia atrás y luego la baja a su costado
+                alza = dict(hombro, palma=tuple(np.asarray(hombro["palma"], np.float32) + np.array([50.0, -70.0, -110.0], np.float32)))
+                mano_der_m = self.transicion(t, mama(26), {}, detras, "der", hombro, alza, suave(progreso(lt, 0.95, 1.12)))
+                if lt > 1.08:
+                    mano_der_m = self.transicion(t, mama(26), {}, detras, "der", alza, None, suave(progreso(lt, 1.08, 1.3)))
+            pose_m = {"cara": "sonrisa", "mano_izq": mano_m, "mano_der": mano_der_m,
+                      "mirar": tuple(ib["boca"]), "inclinacion": 0.08}
+            pb, _ = self.persona(t, hijo(7), pose_nb, pos_n, desfase=1.7, evitar=[])
+            pm, _ = self.persona(t, mama(26), pose_m, detras, evitar=pb)
+            pb, _ = self.persona(t, hijo(7), pose_nb, pos_n, desfase=1.7, evitar=pm)
+            if 0.68 < lt < 1.04:  # en el relevo las dos manos se tocan sobre el mango
+                U.permitir([q for q in pb if getattr(q, "grupo", "") == "mano_izq"], ("mama", "mano_izq"))
             prims = pb + pm + cep
         else:
-            prims, _ = self.nino_cepillandose(t, 7, pos_n, amp=8.0 * suave(progreso(lt, 1.05, 1.5)), f=2.5, agarre=52.0)
-            if lt < 1.45:  # la mano de mamá se aleja del cepillo y vuelve a su costado
-                k = suave(progreso(lt, 1.05, 1.45))
-                im0 = self.info(t, mama(26), {}, MAMA_DETRAS)
-                hx, hy, hz = im0["hombros"]["izq"]
-                ini = np.array([470.0, 1000.0, 90.0], np.float32)
-                fin = np.array([hx - 20, hy + 380, hz + 40], np.float32)
-                mano = {"centro": tuple(ini * (1 - k) + fin * k), "forma": "relajada", "polo": (-1.0, 0.4, -0.3)}
-                pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "mano_izq": mano, "mirar": tuple(ib["cabeza"])}, MAMA_DETRAS)
+            k_eje = suave(progreso(lt, 1.3, 1.7))  # el cepillo pasa del ángulo de mamá al suyo sin saltos
+            eje_n = tuple(N(np.array((-0.80, 0.22, 0.56), np.float32) * (1 - k_eje) + np.array(EJE_SOLO, np.float32) * k_eje))
+            prims, ib = self.nino_cepillandose(t, 7, pos_n, amp=8.0 * suave(progreso(lt, 1.3, 1.7)), f=2.5, agarre=64.0 + 20.0 * k_eje, eje=eje_n)
+            if lt < 1.65:  # la mano de mamá, ya abierta, vuelve a su costado por detrás
+                ib1 = self.info(t, hijo(7), {"cara": "abierta"}, pos_n, desfase=1.7)
+                _, spec1 = self.cepillo_en_boca(t, ib1, (-0.80, 0.22, 0.56), U.AZUL, amp=0.0, agarre=112.0)
+                suelta_spec = {"agarre": tuple(np.asarray(spec1["agarre"], np.float32) + np.array([-50.0, -34.0, 22.0], np.float32)), "eje": spec1["eje"], "forma": "relajada", "polo": (-0.9, 0.5, -0.6)}
+                mano = self.transicion(t, mama(26), {}, detras, "izq", suelta_spec, None, suave(progreso(lt, 1.3, 1.65)), arco=(-20.0, -60.0, -110.0))
+                pm, _ = self.persona(t, mama(26), {"cara": "sonrisa", "mano_izq": mano, "mirar": tuple(ib["cabeza"])}, detras, evitar=prims)
             else:
-                pm, _ = self.mama_caminando(t, 26, 1.45, 3.65, (MAMA_DETRAS[0], MAMA_DETRAS[2]), PUERTA_XZ, {"cara": "sonrisa", "mirar": tuple(ib["cabeza"])}, giro_cuerpo=-0.1)
+                pm, _ = self.mama_caminando(t, 26, 1.6, 3.7, (detras[0], detras[2]), PUERTA_XZ, {"cara": "sonrisa", "mirar": tuple(ib["cabeza"])}, giro_cuerpo=-0.1)
             prims = prims + pm
         return self.componer(t, "noche", prims + self.encimera_objetos(t, ("amarillo", None)), marco=tarjeta_en_ranura("hijo", 0), sombras=[(pos_n[0] + 72, 62, 36, 20, 0.4)])
 
     # 10 · Mamá lo mira desde la puerta; levanta la mano para ayudarle y la baja (acercamiento lento)
     def escena_10(self, t, e):
         lt = t - e["inicio"]
-        prims, ib = self.nino_cepillandose(t, 7, NINO7, amp=9.0 + 3 * math.sin(lt * 1.3), f=2.3, agarre=52.0)
+        prims, ib = self.nino_cepillandose(t, 7, NINO7, amp=9.0 + 3 * math.sin(lt * 1.3), f=2.3)
         x, z = PUERTA_XZ
         sube = suave(progreso(lt, 1.0, 1.6)) * (1 - suave(progreso(lt, 2.4, 3.0)))
         im0 = self.info(t, mama(26), {}, (x, YM, z), vaiven=False, desfase=0.4)
@@ -1613,7 +1642,7 @@ class Renderizador:
 
     # 11 · Solo cambia el contador
     def escena_11(self, t, e):
-        prims, _ = self.nino_cepillandose(t, 7, NINO7, f=2.4, agarre=52.0)
+        prims, _ = self.nino_cepillandose(t, 7, NINO7, f=2.4)
         return self.componer(t, "noche", prims + self.encimera_objetos(t, ("amarillo", None)), marco=tarjeta_en_ranura("hijo", 0), sombras=[(NINO7[0] + 72, 62, 36, 20, 0.4)])
 
     # 12 · Adolescente (15) se cepilla con desgana mirando el celular; llega la notificación

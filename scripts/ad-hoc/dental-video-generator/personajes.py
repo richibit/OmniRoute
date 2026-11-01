@@ -605,7 +605,8 @@ class Personaje:
         if spec is None:  # colgando, con balanceo al caminar
             ang = pose.get("balanceo", 0.0) * (-sx)
             larg = (l1 + l2) * 0.97
-            muneca = H + np.array([sx * R * 0.34, larg * math.cos(ang), larg * math.sin(ang) + R * 0.12], np.float32)
+            afuera = 0.44 if "balanceo" in pose else 0.34  # al caminar, la mano pasa por fuera del muslo
+            muneca = H + np.array([sx * R * afuera, larg * math.cos(ang), larg * math.sin(ang) + R * 0.12], np.float32)
             return muneca, None, None, None, polo
         if not isinstance(spec, dict):
             spec = {"centro": spec}
